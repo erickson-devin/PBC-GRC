@@ -19,6 +19,7 @@
  *   9. objective catalog update (issue #273): the one-time migration of stored CMMC objective answers (ensureObjectiveCatalogCurrent) on PostgreSQL. control_objectives.objective_catalog_rev exists and is nullable; two concurrent calls change a legacy row once (SELECT ... FOR UPDATE: one 'catalog-update' event, hashes and lengths only), keep narrative, evidence and Not met answers, re-roll up the Met control, stamp the revision, leave the updated_at of unchanged rows alone, and a third call does nothing; another program of the tenant, an archived program and a non-CMMC framework are not touched.
  *   10. objective roll-up (issue #307): writeObjective with framework CMMC_L2 lowers one objective of a Met control and the control is lowered in the same transaction. The event CHECK on control_assessment_events.source accepts 'objective-rollup', exactly one such event exists (MET -> the rolled-up status, notes unchanged and kept only as a digest), another program's Met control is untouched, and the same write under a non-CMMC framework lowers nothing.
  *   11. Tools and services register (#239, #243, #248, #249): 8t inventory_vendors, inventory_tools and inventory_events (tenant isolation, the composite vendor key that nulls on delete, the unique name / seed / rank indexes, the CHECKs, the append-only history); 8u program_tools and program_tool_controls (program isolation, composite foreign keys, cascades from a tool and from a program); 8v the data inventory (program_data_inventory, program_cui_categories, program_cui_category_tools: isolation, the category and role CHECKs, the cascade from the answer); 8w program_vendor_documents (isolation, doc_kind CHECK, vendor cascade) and program_inventory_events (isolation, no foreign key, append-only). Rows are prefixed rls_verify.
+ *   12. Document register (#240, #250): 8r governance_documents (tenant isolation, the unique live-title and seed-key indexes with a RETIRED title reusable, the kind / approval / seed CHECKs); 8s program_governance_documents, program_document_controls, program_document_attachments and program_document_expectations (program isolation, composite foreign keys to the program and the document, the one-primary partial unique index, the id CHECKs, cascades from a document and from a program). Rows are prefixed rls_verify.
  * It inserts and removes a few rows prefixed "rls_verify_" in tenants, tenant_users, enclave_assets, programs, control_assessments, control_assessment_events (actor "rls_verify_actor"), the vm_* tables (plus "RLS-VERIFY-" rows in vm_vulns) and local_users (ids "rls_verify_lu_*", plus their local_user_password_history rows); section 3e also writes control_objective_events (actor "rls_verify_actor") for programs it creates and deletes; section 8e creates and drops the schema rls_verify_upgrade. Exit code 0 = all checks passed.
  */
 import { createHash } from 'node:crypto';
@@ -2070,6 +2071,107 @@ async function verifyProgramIsolation() {
     check(pieBadAction.ok, '8w. program_inventory_events: an action that is not snake case is refused (23514, program_inventory_events_shape_check)', pieBadAction.detail);
     await queryWithProgram(scopeA, "DELETE FROM program_inventory_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
 
+    // 8r. Document register (#240): governance_documents is a tenant table (tenant policy only), with live-title and seed-key unique indexes and inline CHECKs
+    const insertGd = 'INSERT INTO governance_documents (tenant_id, kind, title, status, approval_date, approved_at, version, seed_key) VALUES ($1, $2, $3, $4, $5::date, $6::timestamptz, $7, $8) RETURNING id';
+    const gdArgs = (tenant: string, title: string, over: Partial<{ kind: string; status: string; date: string | null; at: string | null; version: string; seed: string | null }> = {}): (string | null)[] =>
+      [tenant, over.kind ?? 'POLICY', title, over.status ?? 'DRAFT', over.date === undefined ? null : over.date, over.at === undefined ? null : over.at, over.version ?? '', over.seed === undefined ? null : over.seed];
+    const mkDoc = async (tenant: string, title: string, over: Parameters<typeof gdArgs>[2] = {}): Promise<string> => String((await queryWithTenant(tenant, insertGd, gdArgs(tenant, title, over))).rows[0]?.id);
+    const docX = await mkDoc(TENANT_X, 'rls_verify_doc_x');
+    check(Boolean(docX), '8r. governance_documents: under tenant X the document is inserted');
+    const gdYSees = await queryWithTenant(TENANT_Y, 'SELECT 1 FROM governance_documents WHERE tenant_id = $1', [TENANT_X]);
+    check(gdYSees.rows.length === 0, "8r. governance_documents: tenant Y reads none of tenant X's rows", 'saw ' + gdYSees.rows.length);
+    const gdNoCtx = await pool.query("SELECT 1 FROM governance_documents WHERE title LIKE 'rls_verify_%'");
+    check(gdNoCtx.rows.length === 0, '8r. governance_documents: no tenant context reads zero rows', 'saw ' + gdNoCtx.rows.length);
+    const gdYInserts = await rejectsTenant(TENANT_Y, insertGd, gdArgs(TENANT_X, 'rls_verify_doc_evil'), { code: '42501' });
+    check(gdYInserts.ok, '8r. governance_documents: tenant Y cannot insert a document into tenant X (WITH CHECK, 42501)', gdYInserts.detail);
+    const gdDuplicate = await rejectsTenant(TENANT_X, insertGd, gdArgs(TENANT_X, 'RLS_VERIFY_DOC_X'), { code: '23505', constraint: 'unq_governance_documents_title' });
+    check(gdDuplicate.ok, '8r. governance_documents: a second live document with the same title ignoring case is refused (23505, unq_governance_documents_title)', gdDuplicate.detail);
+    const docRetired = await mkDoc(TENANT_X, 'rls_verify_doc_retired', { status: 'RETIRED' });
+    let gdReused = false;
+    try {
+      gdReused = Boolean(await mkDoc(TENANT_X, 'rls_verify_doc_retired'));
+    } catch {
+      gdReused = false;
+    }
+    check(Boolean(docRetired) && gdReused, '8r. governance_documents: the title of a RETIRED document can be used again (the unique index covers live rows only)');
+    const gdKind = await rejectsTenant(TENANT_X, insertGd, gdArgs(TENANT_X, 'rls_verify_doc_kind', { kind: 'bad' }), { code: '23514', constraint: 'governance_documents_enum_check' });
+    const gdApproval = await rejectsTenant(TENANT_X, insertGd, gdArgs(TENANT_X, 'rls_verify_doc_approval', { status: 'APPROVED', date: null, at: '2026-01-01T00:00:00Z', version: '1.0' }), { code: '23514', constraint: 'governance_documents_approval_check' });
+    const gdSeed = await rejectsTenant(TENANT_X, insertGd, gdArgs(TENANT_X, 'rls_verify_doc_seed', { seed: 'x' }), { code: '23514', constraint: 'governance_documents_seed_check' });
+    check(gdKind.ok && gdApproval.ok && gdSeed.ok, "8r. governance_documents: kind = 'bad', APPROVED with no approval date and seed_key = 'x' are each refused (23514)", [gdKind.detail, gdApproval.detail, gdSeed.detail].join(' | '));
+    const gdApproved = await mkDoc(TENANT_X, 'rls_verify_doc_approved', { status: 'APPROVED', date: '2026-11-01', at: '2026-11-01T00:00:00Z', version: '1.0' });
+    check(Boolean(gdApproved), '8r. governance_documents: an APPROVED document with a date, a time and a version is accepted');
+
+    // 8s. the four program tables of the register (the 8j pattern): declared documents, control links, attachments and checklist links of one program
+    const docY = await mkDoc(TENANT_Y, 'rls_verify_doc_y');
+    const docPg = await mkDoc(TENANT_X, 'rls_verify_doc_pg');
+    const insertPgd = 'INSERT INTO program_governance_documents (tenant_id, program_id, document_id, added_by) VALUES ($1, $2, $3, $4) RETURNING document_id';
+    const insertPdc = 'INSERT INTO program_document_controls (tenant_id, program_id, document_id, control_id, linked_by) VALUES ($1, $2, $3, $4, $5) RETURNING control_id';
+    const insertPda = 'INSERT INTO program_document_attachments (tenant_id, program_id, document_id, evidence_id, is_primary, linked_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING evidence_id';
+    const insertPde = 'INSERT INTO program_document_expectations (tenant_id, program_id, expected_id, document_id, linked_by) VALUES ($1, $2, $3, $4, $5) RETURNING expected_id';
+    const pgd1 = await queryWithProgram(scopeA, insertPgd, [TENANT_X, programA, docPg, 'rls_verify_actor']);
+    const pdc1 = await queryWithProgram(scopeA, insertPdc, [TENANT_X, programA, docPg, 'AC.L2-3.1.1', 'rls_verify_actor']);
+    const pda1 = await queryWithProgram(scopeA, insertPda, [TENANT_X, programA, docPg, 'rls_verify_evidence', true, 'rls_verify_actor']);
+    const pde1 = await queryWithProgram(scopeA, insertPde, [TENANT_X, programA, 'cmmc-l2-rls-verify', docPg, 'rls_verify_actor']);
+    check(pgd1.rows.length === 1 && pdc1.rows.length === 1 && pda1.rows.length === 1 && pde1.rows.length === 1, '8s. the document program tables: under program A the membership, the control link, the attachment and the checklist link are inserted');
+    const docTables: { table: string; by: string; insert: string; args: (string | boolean)[]; fk: string }[] = [
+      { table: 'program_governance_documents', by: 'added_by', insert: insertPgd, args: [TENANT_X, programA, docPg, 'rls_verify_actor'], fk: 'fk_program_governance_documents_document' },
+      { table: 'program_document_controls', by: 'linked_by', insert: insertPdc, args: [TENANT_X, programA, docPg, 'SC.L2-3.13.1', 'rls_verify_actor'], fk: 'fk_program_document_controls_document' },
+      { table: 'program_document_attachments', by: 'linked_by', insert: insertPda, args: [TENANT_X, programA, docPg, 'rls_verify_evidence_2', false, 'rls_verify_actor'], fk: 'fk_program_document_attachments_document' },
+      { table: 'program_document_expectations', by: 'linked_by', insert: insertPde, args: [TENANT_X, programA, 'cmmc-l2-rls-verify-2', docPg, 'rls_verify_actor'], fk: 'fk_program_document_expectations_document' },
+    ];
+    for (const t of docTables) {
+      const bSeesA = await queryWithProgram(scopeB, 'SELECT 1 FROM ' + t.table + ' WHERE program_id = $1', [programA]);
+      const bSeesAny = await queryWithProgram(scopeB, 'SELECT 1 FROM ' + t.table + ' WHERE tenant_id = $1', [TENANT_X]);
+      check(bSeesA.rows.length === 0 && bSeesAny.rows.length === 0, '8s. ' + t.table + ": program B cannot read program A's rows (0 rows, by program or by tenant)", 'saw ' + bSeesA.rows.length + ' / ' + bSeesAny.rows.length);
+      const bUpdates = await queryWithProgram(scopeB, 'UPDATE ' + t.table + ' SET ' + t.by + " = 'rls_verify_changed' WHERE program_id = $1", [programA]);
+      const bDeletes = await queryWithProgram(scopeB, 'DELETE FROM ' + t.table + ' WHERE program_id = $1', [programA]);
+      check((bUpdates.rowCount ?? 0) === 0 && (bDeletes.rowCount ?? 0) === 0, '8s. ' + t.table + ": program B can neither update nor delete program A's rows (0 rows)", 'updated ' + bUpdates.rowCount + ', deleted ' + bDeletes.rowCount);
+      const noCtx = await queryWithTenant(TENANT_X, 'SELECT 1 FROM ' + t.table + ' WHERE tenant_id = $1', [TENANT_X]);
+      check(noCtx.rows.length === 0, '8s. ' + t.table + ': a tenant context with no program context sees zero rows', 'saw ' + noCtx.rows.length);
+      const bInserts = await rejectsIn(scopeB, t.insert, t.args as (string | number | boolean | null)[], { code: '42501' });
+      let noCtxInsert = 'no error';
+      try {
+        await queryWithTenant(TENANT_X, t.insert, t.args as (string | number | boolean | null)[]);
+      } catch (err) {
+        noCtxInsert = String((err as { code?: string }).code);
+      }
+      check(bInserts.ok && noCtxInsert === '42501', '8s. ' + t.table + ': program B, and a context with no program, cannot insert a row into program A (WITH CHECK, 42501)', bInserts.detail + ' | ' + noCtxInsert);
+      const foreignArgs = t.args.map((a) => (a === docPg ? docY : a));
+      const foreignDoc = await rejectsIn(scopeA, t.insert, foreignArgs as (string | number | boolean | null)[], { code: '23503', constraint: t.fk });
+      check(foreignDoc.ok, "8s. " + t.table + ": tenant X cannot take tenant Y's document (composite foreign key, 23503, " + t.fk + ')', foreignDoc.detail);
+    }
+    const pgdForeignProgram = await rejectsIn({ tenantId: TENANT_X, programId: defaultY }, insertPgd, [TENANT_X, defaultY, docPg, 'rls_verify_actor'], { code: '23503', constraint: 'fk_program_governance_documents_program' });
+    check(pgdForeignProgram.ok, "8s. program_governance_documents: tenant X cannot attach a document to tenant Y's program (composite foreign key, 23503)", pgdForeignProgram.detail);
+    const pdaTwoPrimaries = await rejectsIn(scopeA, insertPda, [TENANT_X, programA, docPg, 'rls_verify_evidence_3', true, 'rls_verify_actor'], { code: '23505', constraint: 'unq_program_document_attachments_primary' });
+    check(pdaTwoPrimaries.ok, '8s. program_document_attachments: a second primary attachment for the same document and program is refused (23505, unq_program_document_attachments_primary)', pdaTwoPrimaries.detail);
+    const pdeBadId = await rejectsIn(scopeA, insertPde, [TENANT_X, programA, 'Bad Id', docPg, 'rls_verify_actor'], { code: '23514', constraint: 'program_document_expectations_id_check' });
+    const pdcBadControl = await rejectsIn(scopeA, insertPdc, [TENANT_X, programA, docPg, 'bad id', 'rls_verify_actor'], { code: '23514', constraint: 'program_document_controls_control_check' });
+    check(pdeBadId.ok && pdcBadControl.ok, "8s. expected_id = 'Bad Id' and a control id such as 'bad id' are each refused (23514)", pdeBadId.detail + ' | ' + pdcBadControl.detail);
+    // a foreign-key cascade is not filtered by row security: the document delete (tenant context only) removes the rows that program A owns
+    await queryWithTenant(TENANT_X, 'DELETE FROM governance_documents WHERE id = $1', [docPg]);
+    const docCascade = await queryWithProgram(
+      scopeA,
+      `SELECT (SELECT COUNT(*) FROM program_governance_documents WHERE program_id = $1)::int AS m, (SELECT COUNT(*) FROM program_document_controls WHERE program_id = $1)::int AS c,
+              (SELECT COUNT(*) FROM program_document_attachments WHERE program_id = $1)::int AS a, (SELECT COUNT(*) FROM program_document_expectations WHERE program_id = $1)::int AS e`,
+      [programA]
+    );
+    check(docCascade.rows[0].m === 0 && docCascade.rows[0].c === 0 && docCascade.rows[0].a === 0 && docCascade.rows[0].e === 0, '8s. the document program tables: deleting a document (tenant context only) removes its rows through the cascade', JSON.stringify(docCascade.rows[0]));
+    const docProgram = await createSmProgram(TENANT_X, { name: 'rls_verify_documents_cascade', frameworkId: 'CMMC_L2' }, null);
+    const docScope = { tenantId: TENANT_X, programId: docProgram.id };
+    const docCasc = await mkDoc(TENANT_X, 'rls_verify_doc_cascade');
+    await queryWithProgram(docScope, insertPgd, [TENANT_X, docProgram.id, docCasc, 'rls_verify_actor']);
+    await queryWithProgram(docScope, insertPdc, [TENANT_X, docProgram.id, docCasc, 'AC.L2-3.1.1', 'rls_verify_actor']);
+    await queryWithProgram(docScope, insertPda, [TENANT_X, docProgram.id, docCasc, 'rls_verify_evidence', true, 'rls_verify_actor']);
+    await queryWithProgram(docScope, insertPde, [TENANT_X, docProgram.id, 'cmmc-l2-rls-verify', docCasc, 'rls_verify_actor']);
+    await queryWithTenant(TENANT_X, 'DELETE FROM programs WHERE tenant_id = $1 AND id = $2', [TENANT_X, docProgram.id]);
+    const docProgramCascade = await queryWithProgram(
+      docScope,
+      `SELECT (SELECT COUNT(*) FROM program_governance_documents WHERE program_id = $1)::int AS m, (SELECT COUNT(*) FROM program_document_controls WHERE program_id = $1)::int AS c,
+              (SELECT COUNT(*) FROM program_document_attachments WHERE program_id = $1)::int AS a, (SELECT COUNT(*) FROM program_document_expectations WHERE program_id = $1)::int AS e`,
+      [docProgram.id]
+    );
+    check(docProgramCascade.rows[0].m === 0 && docProgramCascade.rows[0].c === 0 && docProgramCascade.rows[0].a === 0 && docProgramCascade.rows[0].e === 0, '8s. the document program tables: deleting a program removes its rows through the cascade', JSON.stringify(docProgramCascade.rows[0]));
+
     await verifyUpgrade();
   } finally {
     for (const t of [TENANT_X, TENANT_Y]) {
@@ -2077,6 +2179,7 @@ async function verifyProgramIsolation() {
       await queryWithTenant(t, "DELETE FROM inventory_tools WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined); // the boundary, link and data-inventory rows cascade with their tool
       await queryWithTenant(t, "DELETE FROM inventory_vendors WHERE name LIKE 'rls_verify_%'", []).catch(() => undefined);
       await queryWithTenant(t, "DELETE FROM inventory_events WHERE actor LIKE 'rls_verify%'", []).catch(() => undefined);
+      await queryWithTenant(t, "DELETE FROM governance_documents WHERE title LIKE 'rls_verify_%'", []).catch(() => undefined); // the program rows cascade with their document
       await queryWithTenant(t, "DELETE FROM enclave_assets WHERE asset_name LIKE 'rls_verify_%'", []).catch(() => undefined); // the membership rows cascade with their asset
     }
     // the history has no foreign key, so a program's delete does not remove its events

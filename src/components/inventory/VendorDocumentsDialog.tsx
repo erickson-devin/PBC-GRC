@@ -1,5 +1,5 @@
 import React, { useId, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, FileCheck2, Paperclip, X } from 'lucide-react';
+import { CheckCircle2, FileCheck2, X } from 'lucide-react';
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -10,12 +10,12 @@ import {
   DOC_KIND_LABELS,
   VENDOR_UI_TEXT,
   docRows,
-  evidenceChoices,
   suggestedVendorDocControl,
   uploadLinkFailedText,
   vendorErrorMessage,
 } from '../../data/inventory/vendorRegisterView';
 import { VENDOR_DOCUMENT_KINDS, type InventoryVendor, type VendorDocumentKind, type VendorDocumentLink } from '../../types/inventory';
+import { EvidenceAttachFieldset } from './EvidenceAttachFieldset';
 
 interface VendorDocumentsDialogProps {
   vendor: InventoryVendor;
@@ -26,8 +26,6 @@ interface VendorDocumentsDialogProps {
   canEdit: boolean;
   onClose: () => void;
 }
-
-type Source = 'existing' | 'upload';
 
 const fieldClass = 'w-full bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500';
 const labelClass = 'block font-semibold text-slate-300 mb-1.5';
@@ -45,13 +43,8 @@ export const VendorDocumentsDialog: React.FC<VendorDocumentsDialogProps> = ({ ve
   const id = (k: string): string => `${uid}-${k}`;
 
   const [docKind, setDocKind] = useState<VendorDocumentKind>('CRM');
-  const [source, setSource] = useState<Source>('existing');
-  const [evidenceId, setEvidenceId] = useState('');
   const catalogIds = useMemo(() => new Set(frameworkControls.map((c) => c.id)), [frameworkControls]);
   const suggested = suggestedVendorDocControl(framework, catalogIds);
-  const [controlId, setControlId] = useState(suggested ?? '');
-  const [file, setFile] = useState<File | null>(null);
-  const [fileKey, setFileKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('');
@@ -61,11 +54,9 @@ export const VendorDocumentsDialog: React.FC<VendorDocumentsDialogProps> = ({ ve
   const unlinkButtons = useRef(new Map<string, HTMLButtonElement>());
 
   const displayId = (cid: string): string => cmmcDisplayId(cid, framework);
-  const choices = useMemo(() => evidenceChoices(state.evidenceIndex), [state.evidenceIndex]);
+  const uploadControls = useMemo(() => frameworkControls.map((c) => ({ id: c.id, label: `${displayId(c.id)} ${c.title}` })), [frameworkControls, framework]);
   const rows = useMemo(() => docRows(links, vendor.id, state.evidenceIndex), [links, vendor.id, state.evidenceIndex]);
   const linkedIds = useMemo(() => new Set(rows.map((r) => r.evidenceId)), [rows]);
-
-  const complete = source === 'existing' ? evidenceId !== '' : controlId !== '' && file !== null;
 
   const open = (evId: string): void => {
     const item = state.evidenceIndex.find((e) => e.id === evId);
@@ -93,32 +84,42 @@ export const VendorDocumentsDialog: React.FC<VendorDocumentsDialogProps> = ({ ve
     }
   };
 
-  const attach = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
-    if (busy || !complete) return;
+  // The attach fieldset clears its entries when these resolve and keeps them when they reject; the errors and status are shown here
+  const attachUpload = async (controlId: string, file: File): Promise<void> => {
     setBusy(true);
     setError(null);
     setStatus('');
-    let linkedEvidenceId = evidenceId;
     let uploaded = false;
     try {
-      if (source === 'upload' && file) {
-        const ev = await uploadEvidence(controlId, file, 'Vendor document');
-        linkedEvidenceId = ev.id;
-        uploaded = true;
-      }
-      await inv.linkDocument(vendor.id, linkedEvidenceId, docKind);
+      const ev = await uploadEvidence(controlId, file, 'Vendor document');
+      uploaded = true;
+      await inv.linkDocument(vendor.id, ev.id, docKind);
       setStatus('Document linked.');
-      setEvidenceId('');
-      setFile(null);
-      setFileKey((k) => k + 1);
       setTimeout(() => kindRef.current?.focus(), 0);
     } catch (err: unknown) {
-      setError(uploaded ? uploadLinkFailedText(displayId(controlId)) : vendorErrorMessage(err, source === 'upload' ? 'upload' : 'link'));
       if (uploaded) {
-        setFile(null);
-        setFileKey((k) => k + 1);
+        // the file is in the vault but not linked: the form is cleared so it is not uploaded twice
+        setError(uploadLinkFailedText(displayId(controlId)));
+        return;
       }
+      setError(vendorErrorMessage(err, 'upload'));
+      throw err;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const attachExisting = async (evId: string): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setStatus('');
+    try {
+      await inv.linkDocument(vendor.id, evId, docKind);
+      setStatus('Document linked.');
+      setTimeout(() => kindRef.current?.focus(), 0);
+    } catch (err: unknown) {
+      setError(vendorErrorMessage(err, 'link'));
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -223,9 +224,19 @@ export const VendorDocumentsDialog: React.FC<VendorDocumentsDialogProps> = ({ ve
         )}
 
         {canEdit && (
-          <form onSubmit={(e) => void attach(e)} noValidate className="text-xs">
-            <fieldset className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 space-y-4">
-              <legend className="px-1 font-semibold text-slate-300">Attach a document</legend>
+          <EvidenceAttachFieldset
+            legend="Attach a document"
+            evidence={state.evidenceIndex}
+            displayId={displayId}
+            uploadControls={uploadControls}
+            defaultControlId={suggested}
+            uploadHint={VENDOR_UI_TEXT.uploadHint}
+            disabledEvidenceIds={linkedIds}
+            submitLabel="Attach"
+            busy={busy}
+            onAttachExisting={attachExisting}
+            onUpload={attachUpload}
+            extra={
               <div>
                 <label htmlFor={id('kind')} className={labelClass}>Document type</label>
                 <select ref={kindRef} id={id('kind')} value={docKind} onChange={(e) => setDocKind(e.target.value as VendorDocumentKind)} className={fieldClass}>
@@ -234,77 +245,8 @@ export const VendorDocumentsDialog: React.FC<VendorDocumentsDialogProps> = ({ ve
                   ))}
                 </select>
               </div>
-
-              <fieldset>
-                <legend className={labelClass}>Source</legend>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {(
-                    [
-                      ['existing', 'A file already in the Evidence Vault'],
-                      ['upload', 'Upload a new file'],
-                    ] as const
-                  ).map(([v, text]) => (
-                    <label
-                      key={v}
-                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
-                        source === v ? 'border-cyan-500/60 bg-cyan-500/10 text-white' : 'border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-800'
-                      }`}
-                    >
-                      <input type="radio" name={id('source')} value={v} checked={source === v} onChange={() => setSource(v)} className="accent-cyan-500" />
-                      <span>{text}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              {source === 'existing' ? (
-                choices.length === 0 ? (
-                  <p className="text-slate-400">This program has no evidence files yet.</p>
-                ) : (
-                  <div>
-                    <label htmlFor={id('file')} className={labelClass}>File</label>
-                    <select id={id('file')} value={evidenceId} onChange={(e) => setEvidenceId(e.target.value)} className={fieldClass}>
-                      <option value="">Choose a file</option>
-                      {choices.map((c) => (
-                        <option key={c.id} value={c.id} disabled={linkedIds.has(c.id)}>{`${c.name} (${displayId(c.controlId)})`}</option>
-                      ))}
-                    </select>
-                  </div>
-                )
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <label htmlFor={id('control')} className={labelClass}>File it under control</label>
-                    <select id={id('control')} value={controlId} onChange={(e) => setControlId(e.target.value)} aria-describedby={id('uploadHint')} className={fieldClass}>
-                      <option value="">Choose a control</option>
-                      {frameworkControls.map((c) => (
-                        <option key={c.id} value={c.id}>{`${displayId(c.id)} ${c.title}`}</option>
-                      ))}
-                    </select>
-                    <p id={id('uploadHint')} className="mt-1 text-slate-400">{VENDOR_UI_TEXT.uploadHint}</p>
-                  </div>
-                  <div>
-                    <label htmlFor={id('upload')} className={labelClass}>File to upload</label>
-                    <input
-                      key={fileKey}
-                      id={id('upload')}
-                      type="file"
-                      aria-describedby={id('uploadHint')}
-                      onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                      className="block w-full text-slate-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border file:border-slate-700 file:bg-slate-800 file:text-slate-200 file:text-xs"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <button type="submit" disabled={busy || !complete} className="btn-primary px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <Paperclip className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>{busy ? 'Attaching…' : 'Attach'}</span>
-                </button>
-              </div>
-            </fieldset>
-          </form>
+            }
+          />
         )}
       </div>
     </DialogOverlay>

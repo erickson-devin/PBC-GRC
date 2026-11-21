@@ -8,6 +8,7 @@ import objectivesRouter from './objectives';
 import sspMetadataRouter from './sspMetadata';
 import controlPoamRouter from './controlPoam';
 import programInventoryRouter from './programInventory';
+import programDocumentsRouter from './programDocuments';
 import tenantsRouter, { createTenantHandler, listMyTenantsHandler } from './tenants';
 import { authMiddleware, authOnlyMiddleware } from '../middleware/authMiddleware';
 import { programContext } from '../middleware/programContext';
@@ -137,6 +138,8 @@ router.use('/ssp-metadata', authMiddleware, programContext, sspMetadataRouter);
 router.use('/control-poam', authMiddleware, programContext, controlPoamRouter);
 // A program's side of the Tools and Services register: boundary tools, control links, data inventory, vendor documents
 router.use('/program-inventory', authMiddleware, programContext, programInventoryRouter);
+// A program's side of the document register: declared documents, control links, attachments, expected-document links
+router.use('/program-documents', authMiddleware, programContext, programDocumentsRouter);
 router.use('/evidence', authMiddleware, programContext, evidenceRouter);
 router.use('/tenants', authMiddleware, tenantsRouter);
 

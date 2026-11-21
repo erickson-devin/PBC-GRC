@@ -69,6 +69,7 @@ export default defineConfig({
           if (id.includes('/src/data/cui/') && id.endsWith('.json')) return 'cui-registry';
           if (id.includes('/src/data/inventory/') && id.endsWith('.json')) return 'tool-catalog';
           if (id.includes('/src/data/releaseNotes/') && id.endsWith('.json')) return 'release-notes';
+          if (id.includes('/src/data/documents/') && id.endsWith('.json')) return 'expected-documents';
 
           // ── Photon SCAP telemetry engine ────────────────────────────────
           if (

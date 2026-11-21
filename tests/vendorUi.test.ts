@@ -188,5 +188,12 @@ assert(clean, 'VU10 no console, browser storage, alert or raw HTML in the vendor
 assert(capped, 'VU10 every dialog is height-capped');
 assert(!/from '\.\.\/\.\.\/(services|hooks)\//.test(src('src/data/inventory/vendorRegisterView.ts')), 'VU10 the view module imports no hook or service');
 
+// VU11 the shared components (UI-D0)
+assert(docs.includes('<EvidenceAttachFieldset'), 'VU11 the vendor dialog renders the shared attach fieldset');
+const sharedLinks = src('src/components/inventory/ControlLinksDialog.tsx');
+assert(sharedLinks.includes('max-h-[') && sharedLinks.includes('<DialogTitle'), 'VU11 the shared control-links dialog is height-capped and titled');
+const sharedAttach = src('src/components/inventory/EvidenceAttachFieldset.tsx');
+assert(sharedAttach.includes('evidenceChoices(') && sharedAttach.includes('uploadDisabledReason') && sharedAttach.includes('aria-describedby'), 'VU11 the attach fieldset uses evidenceChoices and explains a disabled upload');
+
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 if (passed !== total) process.exitCode = 1;

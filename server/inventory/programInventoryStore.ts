@@ -95,6 +95,11 @@ function pushEvent(scope: ProgramScope, action: string, entityId: string | null,
   memoryEvents.push({ id: crypto.randomUUID(), tenantId: scope.tenantId, programId: scope.programId, action, entityId, actor: who.actor.slice(0, 255), createdAt: new Date().toISOString(), detail });
 }
 
+/** The document register (server/documents) records its program history in this same list (memory mode); PostgreSQL has the one table. */
+export function __pushProgramInventoryEventForMemory(scope: ProgramScope, action: string, entityId: string | null, who: InventoryActor, detail: Record<string, unknown>): void {
+  pushEvent(scope, action, entityId, who, detail);
+}
+
 // ------------------------------------------------------------------------------------------------ PostgreSQL helpers
 
 /** One transaction under the tenant's and the program's row policies. */

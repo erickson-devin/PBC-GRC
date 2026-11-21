@@ -112,11 +112,11 @@ assert(
 );
 const navCmmc = navEntriesView(l2Empty, { supported: true, status: 'ready', sections: {} });
 assert(
-  navCmmc.map((e) => e.id).join() === 'identification,roles,system_details,data_inventory,environment,maintenance' &&
+  navCmmc.map((e) => e.id).join() === 'identification,roles,system_details,documents,data_inventory,environment,maintenance' &&
     navCmmc.every((e, i) => e.missingText === (l2Empty.sections[i].requiredMissing ? missingLabel(l2Empty.sections[i].requiredMissing) : null)),
   'V4 the nav entries follow the section order and carry the required count text'
 );
-assert(navCmmc.filter((e) => e.id !== 'system_details' && e.id !== 'data_inventory').every((e) => e.review?.text === 'Not reviewed') && navCmmc.filter((e) => e.id === 'system_details' || e.id === 'data_inventory').every((e) => e.review === null) && navEntriesView(l2Empty, { supported: false, status: 'ready', sections: {} }).every((e) => e.review === null), 'V4b a browser-only organization shows no review chip, and 1.3 and 1.4 (derived, not signed off) never show one');
+assert(navCmmc.filter((e) => e.id !== 'system_details' && e.id !== 'documents' && e.id !== 'data_inventory').every((e) => e.review?.text === 'Not reviewed') && navCmmc.filter((e) => e.id === 'system_details' || e.id === 'documents' || e.id === 'data_inventory').every((e) => e.review === null) && navEntriesView(l2Empty, { supported: false, status: 'ready', sections: {} }).every((e) => e.review === null), 'V4b a browser-only organization shows no review chip, and 1.3, 1.3.2 and 1.4 (derived, not signed off) never show one');
 const changedState: Partial<Record<SspSectionId, SspSectionReviewState>> = {
   roles: { sectionId: 'roles', currentDigest: 'b'.repeat(64), latest: review({ sectionId: 'roles' }), reviewed: false },
 };
@@ -266,7 +266,7 @@ const meta: SSPMetadata = {
 };
 const navHtml = renderToStaticMarkup(React.createElement(SspSectionNav, { entries: navCmmc, activeId: 'roles', onSelect: noop, summary: completenessSummary(l2Empty) }));
 const navOk = l2Empty.sections.every((s) => s.requiredMissing === 0 || (navHtml.includes(`>${s.requiredMissing}<`) && navHtml.includes(missingLabel(s.requiredMissing))));
-assert(navOk && count(navHtml, 'aria-current="true"') === 1 && count(navHtml, '<button') === 6, 'R1 the nav shows each required count with its accessible text, one current section, six buttons');
+assert(navOk && count(navHtml, 'aria-current="true"') === 1 && count(navHtml, '<button') === 7, 'R1 the nav shows each required count with its accessible text, one current section, seven buttons');
 const doneNav = renderToStaticMarkup(React.createElement(SspSectionNav, { entries: navEntriesView(l2Complete, { supported: false, status: 'ready', sections: {} }), activeId: 'identification', onSelect: noop, summary: '' }));
 assert(doneNav.includes('Complete') && !doneNav.includes('required item'), 'R1b a complete section reads Complete');
 
@@ -335,10 +335,12 @@ assert(NOT_RECORDED === 'Not recorded', 'S6 the shared not-recorded text is the 
 console.log('--- Unavailable sections in the nav ---');
 const navOffEntries = navEntriesView(computeSspCompleteness({ ...emptyInput('CMMC_L2'), inventory: undefined }), { supported: true, status: 'ready', sections: {} });
 const navOffHtml = renderToStaticMarkup(React.createElement(SspSectionNav, { entries: navOffEntries, activeId: 'identification', onSelect: noop, summary: 'x' }));
-assert(navOffEntries.filter((e) => !e.available).map((e) => e.id).join() === 'system_details,data_inventory' && count(navOffHtml, 'Not available') === 2, 'R6 the nav with 1.3 and 1.4 unavailable renders Not available for each of them');
+assert(navOffEntries.filter((e) => !e.available).map((e) => e.id).join() === 'system_details,documents,data_inventory' && count(navOffHtml, 'Not available') === 3, 'R6 the nav with 1.3, 1.3.2 and 1.4 unavailable renders Not available for each of them');
 const navOffButtons = navOffHtml.split('<li>').slice(1);
 const navOffUnavailable = navOffButtons.filter((h) => h.includes('Not available'));
-assert(navOffUnavailable.length === 2 && navOffUnavailable.every((h) => !h.includes('rounded-full text-[10px] font-bold bg-rose-500/15') && !h.includes('Complete') && !h.includes('Not reviewed')), 'R6b an unavailable entry has no count pill, no green check and no review chip');
+assert(navOffUnavailable.length === 3 && navOffUnavailable.every((h) => !h.includes('rounded-full text-[10px] font-bold bg-rose-500/15') && !h.includes('Complete') && !h.includes('Not reviewed')), 'R6b an unavailable entry has no count pill, no green check and no review chip');
+const navLoadHtml = renderToStaticMarkup(React.createElement(SspSectionNav, { entries: navEntriesView(computeSspCompleteness({ ...emptyInput('CMMC_L2'), inventory: undefined }), { supported: true, status: 'ready', sections: {} }, { documentsStatus: 'loading' }), activeId: 'identification', onSelect: noop, summary: 'x' }));
+assert(count(navLoadHtml, 'Not available') === 2 && count(navLoadHtml, 'Loading…') === 1, 'R7 the documents entry has its own status wording: Loading… while the other two entries still say Not available');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

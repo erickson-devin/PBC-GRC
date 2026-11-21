@@ -9,6 +9,7 @@ import { __deleteProgramSspProfileForMemory } from './sspProfile';
 import { __deleteProgramControlPoamForMemory } from './controlPoam';
 import { __deleteProgramSspReviewsForMemory } from './sspReviews';
 import { __deleteProgramInventoryForMemory } from './inventory/programInventoryStore';
+import { __deleteProgramDocumentsForMemory } from './documents/programDocumentsStore';
 import { __deleteUserDefaultsForProgramMemory, __resetUserProgramDefaultsForTests } from './userProgramDefaults';
 import { stripDelimitedBlocks } from './vm/snapshot';
 import { countOpenPoamItems, countPoamItems } from './vm/findingsStore';
@@ -825,6 +826,7 @@ export async function deleteProgram(tenantId: string, id: string): Promise<void>
     __deleteProgramControlPoamForMemory({ tenantId, programId: id });
     __deleteProgramSspReviewsForMemory({ tenantId, programId: id });
     __deleteProgramInventoryForMemory({ tenantId, programId: id });
+    __deleteProgramDocumentsForMemory({ tenantId, programId: id });
     __deleteUserDefaultsForProgramMemory(tenantId, id);
     memoryPrograms.delete(id);
     promoteSuccessorInMemory(tenantId);

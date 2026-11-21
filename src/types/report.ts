@@ -4,6 +4,7 @@ import type { AssetScopeSummary } from '../data/telemetry/assetScope';
 import type { FipsModuleRef } from '../data/telemetry/fipsValidation';
 import type { SspProfile } from './sspProfile';
 import type { SspInventorySnapshot } from '../data/inventory/sspInventory';
+import type { SspDocumentsSnapshot } from '../data/documents/sspDocuments';
 import type { VmRemediationPolicy } from '../data/vmRemediation';
 
 export type ReportDocumentType =
@@ -65,6 +66,11 @@ export interface ReportMetadata {
    * built without it is unchanged: the SSP prints nothing for 1.3 and 1.4 then. `supported: false` prints "not available".
    */
   sspInventory?: SspInventorySnapshot;
+  /**
+   * The approved governance documents of the program as the SSP prints them (section 1.3.2). Set only when the document register was loaded, so a
+   * package built without it is unchanged: the SSP prints nothing for 1.3.2 then. `supported: false` prints "not available".
+   */
+  sspDocuments?: SspDocumentsSnapshot;
   /**
    * The tenant's vulnerability remediation policy (#268) and the date it is stated as of. When present, the CMMC SSP appends a labelled, generated
    * paragraph about it to RA.L2-3.11.3 and SI.L1-3.14.1 (never stored in a narrative); a package built without it is unchanged.

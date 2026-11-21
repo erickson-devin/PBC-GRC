@@ -33,6 +33,7 @@ import { ConfigurationResultsView } from './components/telemetry/ConfigurationRe
 import { EnclaveStackSurveyModal } from './components/admin/EnclaveStackSurveyModal';
 import { EnclaveSettings } from './components/settings/EnclaveSettings';
 import { PolicyLibraryView } from './views/PolicyLibraryView';
+import { DocumentsPage } from './components/documents/DocumentsPage';
 import { SspImportView } from './components/sspImport/SspImportView';
 import { ProgramsPage } from './components/programs/ProgramsPage';
 import { FirstProgramPrompt } from './components/programs/FirstProgramPrompt';
@@ -312,6 +313,7 @@ const AppContent: React.FC = () => {
                 {activeTab === 'sspimport' && <SspImportView />}
                 {activeTab === 'configresults' && <ConfigurationResultsView />}
                 {activeTab === 'policies' && <PolicyLibraryView />}
+                {activeTab === 'documents' && <DocumentsPage />}
                 {(activeTab === 'evidence' || activeTab === 'vault') && <EvidenceVaultView />}
                 {activeTab === 'poam' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} initialDocType="POAM" initialTab="poam" embedded />}
                 {activeTab === 'export' && <ArtifactExportModal isOpen={true} onClose={() => setActiveTab('dashboard')} embedded />}

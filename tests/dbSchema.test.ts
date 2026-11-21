@@ -309,7 +309,7 @@ assert(!rls.includes('program_isolation') && (rls.match(/WITH CHECK/g) || []).le
 console.log('\n--- Programs: database-enforced isolation (P5) ---');
 const programRls = buildProgramRlsSql();
 const OBJECTIVE_TABLES = ['control_objectives', 'control_objective_events'];
-assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events', 'program_tools', 'program_tool_controls', 'program_data_inventory', 'program_cui_categories', 'program_cui_category_tools', 'program_vendor_documents', 'program_inventory_events']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries, control_poam_events and the seven inventory program tables (program_tools, program_tool_controls, program_data_inventory, program_cui_categories, program_cui_category_tools, program_vendor_documents, program_inventory_events)', RLS_PROGRAM_TABLES);
+assert(JSON.stringify(RLS_PROGRAM_TABLES) === JSON.stringify([...PROGRAM_SCOPED, ...OBJECTIVE_TABLES, 'program_events', 'program_assets', 'program_ssp_metadata', 'vm_poam_item_events', 'program_ssp_profile', 'program_ssp_section_reviews', 'control_poam_entries', 'control_poam_events', 'program_tools', 'program_tool_controls', 'program_data_inventory', 'program_cui_categories', 'program_cui_category_tools', 'program_vendor_documents', 'program_inventory_events', 'program_governance_documents', 'program_document_controls', 'program_document_attachments', 'program_document_expectations']), 'P5: RLS_PROGRAM_TABLES is the six program-scoped tables plus the two objective tables, program_events, program_assets, program_ssp_metadata, vm_poam_item_events, program_ssp_profile, program_ssp_section_reviews, control_poam_entries, control_poam_events, the seven inventory program tables (program_tools, program_tool_controls, program_data_inventory, program_cui_categories, program_cui_category_tools, program_vendor_documents, program_inventory_events) and the four document register program tables (program_governance_documents, program_document_controls, program_document_attachments, program_document_expectations)', RLS_PROGRAM_TABLES);
 assert(RLS_PROGRAM_TABLES.every((t) => RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id')), 'P5: every program table is also a tenant table (the program policy only narrows the tenant policy)');
 assert(schema.includes(programRls) && schema.indexOf(programRls) > schema.indexOf(rls), 'P5: buildSchemaSql() runs the program policies after the tenant policies');
 assert(
@@ -745,7 +745,7 @@ console.log('\n--- control POA&M entries, milestones and stable item numbers (#3
       `CP-D5: ${t} is a tenant table and a program table (FORCE row security, tenant and program policies), not backfilled`
     );
   }
-  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 9] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 8] === 'control_poam_events', 'CP-D6: both tables were appended after the SSP tables (only the seven inventory program tables come after them in RLS_PROGRAM_TABLES)');
+  assert(RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 13] === 'control_poam_entries' && RLS_PROGRAM_TABLES[RLS_PROGRAM_TABLES.length - 12] === 'control_poam_events', 'CP-D6: both tables were appended after the SSP tables (only the seven inventory program tables and the four document register program tables come after them in RLS_PROGRAM_TABLES)');
 
   for (const col of ["milestones JSONB NOT NULL DEFAULT '[]'::jsonb", 'item_number INTEGER']) {
     assert(TABLES_SQL.includes('ALTER TABLE vm_poam_items ADD COLUMN IF NOT EXISTS ' + col + ';'), 'VM-D1: vm_poam_items gets ' + col + ' idempotently (nullable or defaulted: an older image still starts)');
@@ -890,8 +890,63 @@ console.log('\n--- Tools and Services register (inventory_*, program_tools and f
     );
   }
   assert(
-    JSON.stringify(RLS_PROGRAM_TABLES.slice(-7)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-14, -4).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
-    'INV-D7: the new tables are appended at the end of both row-security lists, in creation order'
+    JSON.stringify(RLS_PROGRAM_TABLES.slice(-11, -4)) === JSON.stringify(INVENTORY_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-19, -9).map((r) => r.table)) === JSON.stringify(INVENTORY_TENANT_TABLES),
+    'INV-D7: the register tables sit after the SSP tables in both row-security lists, in creation order (the four remediation tables and the five document register tables come after them in RLS_TENANT_TABLES, the four document register program tables in RLS_PROGRAM_TABLES)'
+  );
+}
+
+console.log('\n--- Document register and expected documents checklist (governance_documents, program_document_*; #240, #250) ---');
+{
+  const blockOf = (table: string): string => {
+    const at = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS ' + table + ' (');
+    return at < 0 ? '' : TABLES_SQL.slice(at, TABLES_SQL.indexOf('\n  );', at));
+  };
+  const DOC_PROGRAM_TABLES = ['program_governance_documents', 'program_document_controls', 'program_document_attachments', 'program_document_expectations'];
+  const DOC_TENANT_TABLES = ['governance_documents', ...DOC_PROGRAM_TABLES];
+  const docsAt = TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS governance_documents (');
+  const docsBlock = blockOf('governance_documents');
+  assert(
+    docsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS programs (') && docsAt > TABLES_SQL.indexOf('CREATE TABLE IF NOT EXISTS program_inventory_events (') &&
+      TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_governance_documents_title ON governance_documents (tenant_id, lower(title)) WHERE status <> \'RETIRED\';') &&
+      TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_governance_documents_seed ON governance_documents (tenant_id, seed_key) WHERE seed_key IS NOT NULL;') &&
+      TABLES_SQL.includes('CREATE INDEX IF NOT EXISTS idx_governance_documents_kind ON governance_documents (tenant_id, kind);') &&
+      docsBlock.includes('governance_documents_approval_check CHECK (status <> \'APPROVED\' OR (approval_date IS NOT NULL AND approved_at IS NOT NULL AND length(btrim(version)) > 0))') &&
+      docsBlock.includes('CONSTRAINT unq_governance_documents_tenant_id UNIQUE (tenant_id, id)') && !/\bIN \(/.test(docsBlock),
+    'DOC-D1: governance_documents is created after programs and the inventory tables, with its three indexes (live titles and seed keys unique per tenant), the approval CHECK and pattern CHECKs instead of IN lists'
+  );
+  const dropped = [...TABLES_SQL.matchAll(/DROP CONSTRAINT IF EXISTS (\w+)/g)].map((m) => m[1]);
+  assert(
+    dropped.every((c) => !DOC_TENANT_TABLES.some((t) => c.startsWith(t))) && !new RegExp('ALTER TABLE (' + DOC_TENANT_TABLES.join('|') + ') (DROP|ADD) CONSTRAINT').test(TABLES_SQL),
+    'DOC-D2: no DROP or ADD CONSTRAINT touches a document register table (every CHECK is inline: no one-way upgrade)',
+    dropped.filter((c) => DOC_TENANT_TABLES.some((t) => c.startsWith(t)))
+  );
+  for (const t of DOC_PROGRAM_TABLES) {
+    const b = blockOf(t);
+    assert(
+      b.includes('REFERENCES programs (tenant_id, id) ON DELETE CASCADE') && b.includes('REFERENCES governance_documents (tenant_id, id) ON DELETE CASCADE') && b.includes('program_id VARCHAR(64) NOT NULL') && b.includes('tenant_id VARCHAR(64) NOT NULL'),
+      `DOC-D3: ${t} cascades with its program and with its document (composite keys on the tenant) and has a NOT NULL program`
+    );
+  }
+  const kindStart = TABLES_SQL.indexOf('ADD CONSTRAINT program_events_kind_check');
+  const kindLine = TABLES_SQL.slice(kindStart, TABLES_SQL.indexOf('\n', kindStart));
+  assert(!/document/.test(kindLine) && kindLine.includes('stack_profile_changed'), 'DOC-D4: the program_events kind CHECK is unchanged (the document register writes to the register history tables)');
+  assert(
+    TABLES_SQL.includes('CREATE UNIQUE INDEX IF NOT EXISTS unq_program_document_attachments_primary ON program_document_attachments (tenant_id, program_id, document_id) WHERE is_primary;') &&
+      blockOf('program_document_expectations').includes("expected_id ~ '^[a-z0-9][a-z0-9-]{1,63}$'") && !/FOREIGN KEY \(tenant_id, expected_id\)/.test(TABLES_SQL),
+    'DOC-D5: a document has at most one primary attachment per program (partial unique index), and the expected-document id is a catalog code with a pattern CHECK and no foreign key'
+  );
+  for (const t of DOC_TENANT_TABLES) {
+    assert(
+      RLS_TENANT_TABLES.some((r) => r.table === t && r.tenantColumn === 'tenant_id') &&
+        (RLS_PROGRAM_TABLES as readonly string[]).includes(t) === DOC_PROGRAM_TABLES.includes(t) &&
+        !(PROGRAM_BACKFILL_TABLES as readonly string[]).includes(t) &&
+        buildRlsSql().includes(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY;`) && (!DOC_PROGRAM_TABLES.includes(t) || buildProgramRlsSql().includes(rlsProgramPolicyName(t))),
+      `DOC-D6: ${t} is a tenant table${DOC_PROGRAM_TABLES.includes(t) ? ' and a program table' : ' (not a program table)'}, FORCE row security, not backfilled`
+    );
+  }
+  assert(
+    JSON.stringify(RLS_PROGRAM_TABLES.slice(-4)) === JSON.stringify(DOC_PROGRAM_TABLES) && JSON.stringify(RLS_TENANT_TABLES.slice(-5).map((r) => r.table)) === JSON.stringify(DOC_TENANT_TABLES),
+    'DOC-D7: the document register tables are appended at the end of both row-security lists, in creation order'
   );
 }
 

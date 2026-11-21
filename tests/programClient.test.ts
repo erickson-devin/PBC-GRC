@@ -586,6 +586,65 @@ async function headers() {
     assert(calls[0].url === '/api/v1/program-inventory/events?limit=20' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === 'p1' && pevents.length === 1, 'PINV-H8 getProgramInventoryEvents is GET /program-inventory/events with the limit and x-program-id', calls[0].url);
     await ApiClient.getProgramInventoryEvents('t1');
     assert(calls[1].url === '/api/v1/program-inventory/events' && headerOf(calls[1], 'x-program-id') === undefined, 'PINV-H8b no limit and no program: no query and no x-program-id');
+    // Document register (#240): tenant-wide calls take no program; the program-documents calls are scoped
+    stub(200, { documents: [], limit: 2000 });
+    const docList = await ApiClient.listDocuments('t1');
+    assert(calls[0].url === '/api/v1/tenants/t1/documents' && (calls[0].init.method ?? 'GET') === 'GET' && headerOf(calls[0], 'x-program-id') === undefined && docList.limit === 2000, 'DOC-H1 listDocuments is GET /tenants/:id/documents with no x-program-id', calls[0].url);
+    stub(201, { document: { id: 'd1', status: 'DRAFT' } });
+    await ApiClient.createDocument('t1', { kind: 'POLICY', title: 'Access Control Policy', origin: 'GENERATED', seedKey: 'generated:CMMC_L2:AC' });
+    assert(calls[0].url === '/api/v1/tenants/t1/documents' && calls[0].init.method === 'POST' && calls[0].init.body === '{"kind":"POLICY","title":"Access Control Policy","origin":"GENERATED","seedKey":"generated:CMMC_L2:AC"}', 'DOC-H2 createDocument is POST with exactly the input', calls[0].init.body);
+    stub(200, { document: { id: 'd1' }, changed: true, approvalCleared: true });
+    const docUpd = await ApiClient.updateDocument('t1', 'd1', { version: '1.1' }, '2026-11-20T00:00:00.000Z');
+    assert(calls[0].url === '/api/v1/tenants/t1/documents/d1' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"version":"1.1","expectedUpdatedAt":"2026-11-20T00:00:00.000Z"}' && docUpd.approvalCleared === true, 'DOC-H3 updateDocument is PUT with the fields and the stamp, and reports a cleared approval', calls[0].init.body);
+    stub(200, { document: { id: 'd1', status: 'APPROVED' } });
+    await ApiClient.approveDocument('t1', 'd1', { version: '1.0', approvalDate: '2026-11-20', reviewBy: null, confirmReviewed: true }, 'stamp');
+    assert(calls[0].url === '/api/v1/tenants/t1/documents/d1/approve' && calls[0].init.method === 'POST' && calls[0].init.body === '{"version":"1.0","approvalDate":"2026-11-20","reviewBy":null,"confirmReviewed":true,"expectedUpdatedAt":"stamp"}', 'DOC-H4 approveDocument is POST /approve with the approval and the stamp (no approver)', calls[0].init.body);
+    stub(200, { document: { id: 'd1' }, changed: true });
+    await ApiClient.setDocumentStatus('t1', 'd1', 'RETIRED', 'stamp');
+    assert(calls[0].url === '/api/v1/tenants/t1/documents/d1/status' && calls[0].init.body === '{"status":"RETIRED","expectedUpdatedAt":"stamp"}', 'DOC-H5 setDocumentStatus is POST /status', calls[0].init.body);
+    stub(200, { programs: 1, controlLinks: 2, attachments: 3, expectations: 4 });
+    const docUse = await ApiClient.getDocumentUsage('t1', 'd1');
+    assert(calls[0].url === '/api/v1/tenants/t1/documents/d1/usage' && docUse.attachments === 3 && docUse.expectations === 4, 'DOC-H6 getDocumentUsage is GET /usage with the four counts', calls[0].url);
+    stub(200, { removed: 'd1' });
+    await ApiClient.deleteDocument('t1', 'd1');
+    assert(calls[0].url === '/api/v1/tenants/t1/documents/d1' && calls[0].init.method === 'DELETE' && headerOf(calls[0], 'x-program-id') === undefined, 'DOC-H7 deleteDocument is DELETE with no x-program-id', calls[0].url);
+    stub(200, { programId: 'p1', declared: false, documentIds: [], controlLinks: [], attachments: [], expectations: [] });
+    const progDocs = await ApiClient.getProgramDocuments('t1', 'p1');
+    assert(calls[0].url === '/api/v1/program-documents' && headerOf(calls[0], 'x-program-id') === 'p1' && progDocs.declared === false && progDocs.attachments.length === 0, 'DOC-H8 getProgramDocuments is GET /program-documents with x-program-id', calls[0].url);
+    stub(200, { documentId: 'd1', controlIds: ['AC.L2-3.1.1'], changed: true });
+    const docCtl = await ApiClient.putDocumentControls('t1', 'd1', ['AC.L2-3.1.1'], [], 'p1');
+    assert(calls[0].url === '/api/v1/program-documents/documents/d1/controls' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"controlIds":["AC.L2-3.1.1"],"expectedControlIds":[]}' && headerOf(calls[0], 'x-program-id') === 'p1' && docCtl.changed === true, 'DOC-H9 putDocumentControls is PUT with the ids and the set it replaces and x-program-id', calls[0].init.body);
+    stub(409, { error: 'The links were changed.', code: 'stale_write', currentControlIds: ['SECRET-MARK'] });
+    let docStale: { message: string; reason?: string } | null = null;
+    try { await ApiClient.putDocumentControls('t1', 'd1', [], ['AC.L2-3.1.1']); } catch (err) { docStale = err as typeof docStale; }
+    assert(docStale !== null && docStale.reason === 'stale_write' && !JSON.stringify(docStale).includes('MARK'), 'DOC-H9b a stale document link write rejects without echoing the other writer', docStale);
+    stub(201, { attachment: { documentId: 'd1', evidenceId: 'ev_1', isPrimary: true, linkedAt: 'x', linkedBy: null }, changed: true });
+    const docAtt = await ApiClient.linkDocumentAttachment('t1', 'd1', { evidenceId: 'ev_1', primary: true }, 'p1');
+    assert(calls[0].url === '/api/v1/program-documents/documents/d1/attachments' && calls[0].init.method === 'POST' && calls[0].init.body === '{"evidenceId":"ev_1","primary":true}' && headerOf(calls[0], 'x-program-id') === 'p1' && docAtt.changed === true && docAtt.attachment?.isPrimary === true, 'DOC-H10 linkDocumentAttachment is POST with the evidence id and primary flag and x-program-id', calls[0].init.body);
+    stub(409, { error: 'x', code: 'document_in_use', controlLinks: 2, attachments: 1, expectations: 3 });
+    let docInUse: { message: string; reason?: string; inUse?: unknown } | null = null;
+    try { await ApiClient.patchProgramDocuments('t1', { remove: ['SECRET-MARK'] }, 'p1'); } catch (err) { docInUse = err as typeof docInUse; }
+    assert(docInUse !== null && docInUse.reason === 'document_in_use' && JSON.stringify(docInUse.inUse) === '{"controlLinks":2,"attachments":1,"expectations":3}' && !docInUse.message.includes('MARK'), 'DOC-H11 a 409 document_in_use carries the three counts (numbers only) and does not echo the request', docInUse);
+    stub(409, { error: 'x', code: 'duplicate_seed', documentId: 'd7' });
+    let docSeed: { reason?: string; documentId?: string } | null = null;
+    try { await ApiClient.createDocument('t1', { kind: 'POLICY', title: 'T', origin: 'GENERATED', seedKey: 'generated:CMMC_L2:AC' }); } catch (err) { docSeed = err as typeof docSeed; }
+    assert(docSeed !== null && docSeed.reason === 'duplicate_seed' && docSeed.documentId === 'd7', 'DOC-H12 a 409 duplicate_seed carries the existing document id', docSeed);
+    stub(400, { error: 'x', code: 'invalid', field: 'title' });
+    let docField: { reason?: string; field?: string } | null = null;
+    try { await ApiClient.createDocument('t1', { title: 'SECRET-MARK' }); } catch (err) { docField = err as typeof docField; }
+    assert(docField !== null && docField.reason === 'invalid' && docField.field === 'title' && !JSON.stringify(docField).includes('MARK'), 'DOC-H13 a 400 invalid carries the field name only', docField);
+    stub(200, { expectedId: 'cmmc-l2-system-security-plan', documentIds: ['d1'], changed: true });
+    await ApiClient.putDocumentExpectation('t1', 'cmmc-l2-system-security-plan', ['d1'], [], 'p1');
+    assert(calls[0].url === '/api/v1/program-documents/expectations/cmmc-l2-system-security-plan' && calls[0].init.method === 'PUT' && calls[0].init.body === '{"documentIds":["d1"],"expectedDocumentIds":[]}' && headerOf(calls[0], 'x-program-id') === 'p1', 'DOC-H14 putDocumentExpectation is PUT with the ids and the set it replaces and x-program-id', calls[0].init.body);
+    stub(200, { attachments: [] });
+    await ApiClient.setDocumentAttachmentPrimary('t1', 'd1', 'ev_1', false, 'p1');
+    assert(calls[0].url === '/api/v1/program-documents/documents/d1/attachments/ev_1' && calls[0].init.method === 'PATCH' && calls[0].init.body === '{"primary":false}' && headerOf(calls[0], 'x-program-id') === 'p1', 'DOC-H15 setDocumentAttachmentPrimary is PATCH with the flag and x-program-id', calls[0].init.body);
+    stub(200, { removed: 'ev_1', documentId: 'd1' });
+    await ApiClient.unlinkDocumentAttachment('t1', 'd1', 'ev_1', 'p1');
+    assert(calls[0].url === '/api/v1/program-documents/documents/d1/attachments/ev_1' && calls[0].init.method === 'DELETE' && headerOf(calls[0], 'x-program-id') === 'p1', 'DOC-H16 unlinkDocumentAttachment is DELETE with x-program-id', calls[0].url);
+    stub(200, { programId: 'p1', declared: true, documentIds: ['d1'], added: 1, removed: 0 });
+    const docPatch = await ApiClient.patchProgramDocuments('t1', { add: ['d1'] }, 'p1');
+    assert(calls[0].url === '/api/v1/program-documents/documents' && calls[0].init.method === 'PATCH' && calls[0].init.body === '{"add":["d1"]}' && docPatch.declared === true && docPatch.added === 1, 'DOC-H17 patchProgramDocuments is PATCH with the change', calls[0].init.body);
 
     stub(201, { program: { id: 'p9', framework: 'NIST_800_53_REV5', baseline: 'HIGH', name: 'N' } });
     const created = await ApiClient.createProgram('t1', { name: 'N', framework: 'NIST_800_53_REV5', baseline: 'HIGH', seed: 'clone', sourceProgramId: 'p1' });
@@ -811,7 +870,7 @@ async function main() {
   console.log('\n--- Static checks ---');
   const root = process.cwd();
   const api = fs.readFileSync(path.join(root, 'src/services/apiClient.ts'), 'utf8').replace(/\r\n/g, '\n');
-  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware', 'getProgramInventory', 'patchProgramTools', 'putToolControls', 'getDataInventory', 'putDataInventory', 'linkVendorDocument', 'unlinkVendorDocument', 'getProgramInventoryEvents'];
+  const scoped = ['getControls', 'updateControl', 'getEvidence', 'requestUploadUrl', 'uploadEvidenceFile', 'sspCapabilities', 'sspListJobs', 'sspUpload', 'sspGetStaged', 'sspGetJob', 'sspReview', 'sspCommit', 'sspCancel', 'sspDelete', 'sspDownloadUrl', 'getSspMetadata', 'putSspMetadata', 'getSspProfile', 'putSspProfile', 'getSspReviews', 'postSspReview', 'listControlPoam', 'updateControlPoam', 'getControlPoamEvents', 'getObjectives', 'putObjective', 'putObjectivesBulk', 'importObjectives', 'getObjectiveHistory', 'getCatalogUpdateChanges', 'getEvidenceFileBlob', 'verifyEvidenceIntegrity', 'deleteEvidence', 'getConfigSuggestions', 'getVmPoam', 'updateVmPoamItem', 'getVmPoamItemEvents', 'getVmPoamItem', 'getProgramObservedHosts', 'listProgramObservedSoftware', 'getProgramInventory', 'patchProgramTools', 'putToolControls', 'getDataInventory', 'putDataInventory', 'linkVendorDocument', 'unlinkVendorDocument', 'getProgramInventoryEvents', 'getProgramDocuments', 'patchProgramDocuments', 'putDocumentControls', 'linkDocumentAttachment', 'setDocumentAttachmentPrimary', 'unlinkDocumentAttachment', 'putDocumentExpectation'];
   const methods: { name: string; params: string; body: string }[] = [];
   const re = /^ {2}(?:async )?(\w+)\(([\s\S]*?)\)\s*:\s*[A-Za-z]/gm;
   let m: RegExpExecArray | null;

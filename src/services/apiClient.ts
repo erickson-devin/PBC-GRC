@@ -43,6 +43,7 @@ import type { SoftwareItem, SoftwareItemInput } from '../types/software';
 import { MAX_TOOLS_PER_TENANT, MAX_VENDORS_PER_TENANT } from '../types/inventory';
 import type { DataInventoryRecord, InventoryEvent, InventoryTool, InventoryVendor, ProgramInventory, ProgramInventoryEvent, ToolBatchResult, ToolControlLink, ToolInput, ToolMembership, ToolUsage, VendorDocumentKind, VendorDocumentLink } from '../types/inventory';
 import type { ToolInputWithSeed, VendorInput } from '../data/inventory/inventorySchema';
+import { MAX_DOCUMENTS_PER_TENANT, type DocumentAttachment, type DocumentInput, type DocumentOrigin, type GovernanceDocument, type ProgramDocuments } from '../types/documents';
 import { parseServerSoftwareItems } from '../data/telemetry/softwareItems';
 import { AssetInput, AssetScopeSummary, parseServerAssets, summarizeScope } from '../data/telemetry/assetScope';
 import { SESSION_MARKER_HEADER, SESSION_IDLE_MESSAGE, MFA_REQUIRED_MESSAGE, sessionRefFromHeaders, isSessionRejection, reportResponseStatus, reportCrossTabEnd, isCrossTabReason, sessionEndedMessage } from './sessionSignal';
@@ -79,7 +80,11 @@ export class ApiError extends Error {
   /** The server's machine-readable `reason` (e.g. 'invalid_code', 'password_change_required'), when it sent one. */
   reason?: string;
   /** Only on a 409 `tool_in_use` (removing a tool from a program's boundary): how many control links and CUI category assignments would go with it. Numbers only. */
-  inUse?: { controlLinks: number; cuiLinks: number };
+  inUse?: { controlLinks: number; cuiLinks?: number; attachments?: number; expectations?: number };
+  /** Only on a 400 `invalid` / `invalid_location` from the document register: the name of the field the server refused (an identifier, never a value). */
+  field?: string;
+  /** Only on a 409 `duplicate_seed` (a generated draft already registered): the id of the existing document. */
+  documentId?: string;
   constructor(status: number, message: string) {
     super(message);
     this.name = 'ApiError';
@@ -160,6 +165,20 @@ function apiErrorFromResponse(status: number, body: unknown, tenantId?: string):
   if (reason === 'tool_in_use') {
     const counts = (body ?? {}) as { controlLinks?: unknown; cuiLinks?: unknown };
     err.inUse = { controlLinks: typeof counts.controlLinks === 'number' ? counts.controlLinks : 0, cuiLinks: typeof counts.cuiLinks === 'number' ? counts.cuiLinks : 0 };
+  }
+  // The document register's extras: a field name, counts and an id only, never a title, owner, location or note
+  if (reason === 'document_in_use') {
+    const counts = (body ?? {}) as { controlLinks?: unknown; attachments?: unknown; expectations?: unknown };
+    const n = (v: unknown): number => (typeof v === 'number' ? v : 0);
+    err.inUse = { controlLinks: n(counts.controlLinks), attachments: n(counts.attachments), expectations: n(counts.expectations) };
+  }
+  if ((reason === 'invalid' || reason === 'invalid_location') && typeof (body as { field?: unknown } | null)?.field === 'string') {
+    const field = (body as { field: string }).field;
+    if (/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(field)) err.field = field;
+  }
+  if (reason === 'duplicate_seed' && typeof (body as { documentId?: unknown } | null)?.documentId === 'string') {
+    const id = (body as { documentId: string }).documentId;
+    if (/^[A-Za-z0-9_-]{1,64}$/.test(id)) err.documentId = id;
   }
   // A program-scoped call with no active program in the organization: whoever shows the programs refreshes them so the screen can take over
   if (status === 409 && reason === 'program_required') for (const listener of [...programRequiredListeners]) listener();
@@ -1130,6 +1149,106 @@ export const ApiClient = {
     const data = await authedJson<{ events?: ProgramInventoryEvent[] }>('GET', `/program-inventory/events${limit ? `?limit=${encodeURIComponent(String(limit))}` : ''}`, { tenantId, programId });
     if (!Array.isArray(data?.events)) throw new ApiError(502, 'The server returned an unexpected response.');
     return data.events;
+  },
+
+  // ------------------------------------------------------------------------------------------------------- document register
+  // Tenant-wide (shared by every program): these take no programId. Titles, owners, locations and notes may be CUI: nothing here logs a value.
+
+  /** GET /api/v1/tenants/:id/documents (any member). */
+  async listDocuments(tenantId: string): Promise<{ documents: GovernanceDocument[]; limit: number }> {
+    const data = await authedJson<{ documents?: GovernanceDocument[]; limit?: number }>('GET', `/tenants/${encodeURIComponent(tenantId)}/documents`, { tenantId });
+    if (!Array.isArray(data?.documents)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { documents: data.documents, limit: typeof data.limit === 'number' ? data.limit : MAX_DOCUMENTS_PER_TENANT };
+  },
+
+  /** POST /api/v1/tenants/:id/documents (write roles): always a DRAFT. A generated draft carries origin 'GENERATED' and its seedKey (409 duplicate_seed names the existing document). 409 duplicate_title, 400 invalid_location, 429 limit. */
+  async createDocument(tenantId: string, input: DocumentInput & { origin?: DocumentOrigin; seedKey?: string }): Promise<GovernanceDocument> {
+    const data = await authedJson<{ document?: GovernanceDocument }>('POST', `/tenants/${encodeURIComponent(tenantId)}/documents`, { tenantId, body: input });
+    if (!data?.document || typeof data.document !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.document;
+  },
+
+  /** PUT /api/v1/tenants/:id/documents/:documentId (write roles): the fields given change; expectedUpdatedAt is the stamp last read (409 stale_write). `approvalCleared` is true when the change withdrew the approval. */
+  async updateDocument(tenantId: string, documentId: string, input: DocumentInput, expectedUpdatedAt: string): Promise<{ document: GovernanceDocument; changed: boolean; approvalCleared: boolean }> {
+    const data = await authedJson<{ document?: GovernanceDocument; changed?: boolean; approvalCleared?: boolean }>('PUT', `/tenants/${encodeURIComponent(tenantId)}/documents/${encodeURIComponent(documentId)}`, { tenantId, body: { ...input, expectedUpdatedAt } });
+    if (!data?.document || typeof data.document !== 'object' || typeof data.changed !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { document: data.document, changed: data.changed, approvalCleared: data.approvalCleared === true };
+  },
+
+  /** POST /api/v1/tenants/:id/documents/:documentId/approve (write roles): the approver is the signed-in person. 409 not_reviewed (generated or AI-assisted without confirmReviewed), retired, stale_write. */
+  async approveDocument(tenantId: string, documentId: string, approval: { version: string; approvalDate: string; reviewBy?: string | null; confirmReviewed?: true }, expectedUpdatedAt: string): Promise<GovernanceDocument> {
+    const data = await authedJson<{ document?: GovernanceDocument }>('POST', `/tenants/${encodeURIComponent(tenantId)}/documents/${encodeURIComponent(documentId)}/approve`, { tenantId, body: { ...approval, expectedUpdatedAt } });
+    if (!data?.document || typeof data.document !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.document;
+  },
+
+  /** POST /api/v1/tenants/:id/documents/:documentId/status (write roles): DRAFT withdraws an approval (or reinstates a retired document); RETIRED retires it. */
+  async setDocumentStatus(tenantId: string, documentId: string, status: 'DRAFT' | 'RETIRED', expectedUpdatedAt: string): Promise<GovernanceDocument> {
+    const data = await authedJson<{ document?: GovernanceDocument }>('POST', `/tenants/${encodeURIComponent(tenantId)}/documents/${encodeURIComponent(documentId)}/status`, { tenantId, body: { status, expectedUpdatedAt } });
+    if (!data?.document || typeof data.document !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.document;
+  },
+
+  /** DELETE /api/v1/tenants/:id/documents/:documentId (write roles): its links and attachments in every program go with it (the evidence files stay). */
+  async deleteDocument(tenantId: string, documentId: string): Promise<void> {
+    await authedJson('DELETE', `/tenants/${encodeURIComponent(tenantId)}/documents/${encodeURIComponent(documentId)}`, { tenantId });
+  },
+
+  /** GET /api/v1/tenants/:id/documents/:documentId/usage: in how many programs the document is used and what goes with it (shown before a delete). */
+  async getDocumentUsage(tenantId: string, documentId: string): Promise<{ programs: number; controlLinks: number; attachments: number; expectations: number }> {
+    const data = await authedJson<{ programs?: number; controlLinks?: number; attachments?: number; expectations?: number }>('GET', `/tenants/${encodeURIComponent(tenantId)}/documents/${encodeURIComponent(documentId)}/usage`, { tenantId });
+    if (typeof data?.programs !== 'number' || typeof data.controlLinks !== 'number' || typeof data.attachments !== 'number' || typeof data.expectations !== 'number') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programs: data.programs, controlLinks: data.controlLinks, attachments: data.attachments, expectations: data.expectations };
+  },
+
+  // ------------------------------------------------------------------------------------------ program documents (x-program-id)
+  // The program's document set, control links, attachments and expected-document links: each takes the optional trailing programId like the other scoped calls.
+
+  /** GET /api/v1/program-documents (any member): the program's set (`declared`: false means every register document), control links, attachments and expected-document links. */
+  async getProgramDocuments(tenantId: string, programId?: string | null): Promise<ProgramDocuments> {
+    const data = await authedJson<Partial<ProgramDocuments>>('GET', '/program-documents', { tenantId, programId });
+    if (!Array.isArray(data?.documentIds) || !Array.isArray(data.controlLinks) || !Array.isArray(data.attachments) || !Array.isArray(data.expectations) || typeof data.declared !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programId: typeof data.programId === 'string' ? data.programId : '', declared: data.declared, documentIds: data.documentIds, controlLinks: data.controlLinks, attachments: data.attachments, expectations: data.expectations };
+  },
+
+  /** PATCH /api/v1/program-documents/documents (write roles): documents to add to and remove from the program's set. 409 document_in_use carries `inUse` unless `force` is true (which deletes the links too). */
+  async patchProgramDocuments(tenantId: string, change: { add?: string[]; remove?: string[]; force?: boolean }, programId?: string | null): Promise<{ programId: string; declared: boolean; documentIds: string[]; added: number; removed: number }> {
+    const data = await authedJson<{ programId?: string; declared?: boolean; documentIds?: string[]; added?: number; removed?: number }>('PATCH', '/program-documents/documents', { tenantId, programId, body: change });
+    if (!Array.isArray(data?.documentIds) || typeof data.declared !== 'boolean') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { programId: typeof data.programId === 'string' ? data.programId : '', declared: data.declared, documentIds: data.documentIds, added: typeof data.added === 'number' ? data.added : 0, removed: typeof data.removed === 'number' ? data.removed : 0 };
+  },
+
+  /** PUT /api/v1/program-documents/documents/:documentId/controls (write roles): replaces the document's control links in this program; expectedControlIds is the set last read (409 stale_write). */
+  async putDocumentControls(tenantId: string, documentId: string, controlIds: string[], expectedControlIds: string[], programId?: string | null): Promise<{ documentId: string; controlIds: string[]; changed: boolean }> {
+    const data = await authedJson<{ documentId?: string; controlIds?: string[]; changed?: boolean }>('PUT', `/program-documents/documents/${encodeURIComponent(documentId)}/controls`, { tenantId, programId, body: { controlIds, expectedControlIds } });
+    if (!Array.isArray(data?.controlIds)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { documentId: typeof data.documentId === 'string' ? data.documentId : documentId, controlIds: data.controlIds, changed: data.changed === true };
+  },
+
+  /** POST /api/v1/program-documents/documents/:documentId/attachments (write roles): attaches an evidence file of this program; `primary` makes it the primary copy (the old one is demoted). Never uploads or copies the file. */
+  async linkDocumentAttachment(tenantId: string, documentId: string, link: { evidenceId: string; primary?: boolean }, programId?: string | null): Promise<{ attachment: DocumentAttachment | null; changed: boolean }> {
+    const data = await authedJson<{ attachment?: DocumentAttachment; changed?: boolean }>('POST', `/program-documents/documents/${encodeURIComponent(documentId)}/attachments`, { tenantId, programId, body: link });
+    if (!data || typeof data !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return { attachment: data.attachment && typeof data.attachment === 'object' ? data.attachment : null, changed: data.changed === true };
+  },
+
+  /** PATCH /api/v1/program-documents/documents/:documentId/attachments/:evidenceId (write roles): makes the attachment the primary copy, or not. Resolves to the document's attachments. */
+  async setDocumentAttachmentPrimary(tenantId: string, documentId: string, evidenceId: string, primary: boolean, programId?: string | null): Promise<DocumentAttachment[]> {
+    const data = await authedJson<{ attachments?: DocumentAttachment[] }>('PATCH', `/program-documents/documents/${encodeURIComponent(documentId)}/attachments/${encodeURIComponent(evidenceId)}`, { tenantId, programId, body: { primary } });
+    if (!Array.isArray(data?.attachments)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.attachments;
+  },
+
+  /** DELETE /api/v1/program-documents/documents/:documentId/attachments/:evidenceId (write roles): removes the link only, never the evidence file. */
+  async unlinkDocumentAttachment(tenantId: string, documentId: string, evidenceId: string, programId?: string | null): Promise<void> {
+    await authedJson('DELETE', `/program-documents/documents/${encodeURIComponent(documentId)}/attachments/${encodeURIComponent(evidenceId)}`, { tenantId, programId });
+  },
+
+  /** PUT /api/v1/program-documents/expectations/:expectedId (write roles): replaces the documents a person says satisfy an expected document; expectedDocumentIds is the set last read (409 stale_write). */
+  async putDocumentExpectation(tenantId: string, expectedId: string, documentIds: string[], expectedDocumentIds: string[], programId?: string | null): Promise<{ expectedId: string; documentIds: string[]; changed: boolean }> {
+    const data = await authedJson<{ expectedId?: string; documentIds?: string[]; changed?: boolean }>('PUT', `/program-documents/expectations/${encodeURIComponent(expectedId)}`, { tenantId, programId, body: { documentIds, expectedDocumentIds } });
+    if (!Array.isArray(data?.documentIds)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { expectedId: typeof data.expectedId === 'string' ? data.expectedId : expectedId, documentIds: data.documentIds, changed: data.changed === true };
   },
 
   /** POST /api/v1/tenants/:id/assets/bulk: up to 500 at a time; rows whose name already exists come back in `skipped`. */
