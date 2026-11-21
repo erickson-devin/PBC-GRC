@@ -18,7 +18,8 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { getStigRulesForControl } from '../../data/stigs/stigCatalog';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
-import { getControlImpactBadge } from '../../data/frameworks';
+import { FRAMEWORK_REGISTRY, getControlImpactBadge } from '../../data/frameworks';
+import { frameworkHasBaselines } from '../../data/frameworkCapabilities';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 import { hasSspStatement } from '../../data/cmmcGuide/sspStatementView';
@@ -210,7 +211,7 @@ export const ControlCard: React.FC<ControlCardProps> = ({
             </span>
 
             {/* Baseline Impact Tag */}
-            {control.baselineImpact && (
+            {control.baselineImpact && frameworkHasBaselines(activeFramework) && (
               <span
                 className={`text-xs font-mono font-bold px-2 py-0.5 rounded border shadow-sm ${
                   control.baselineImpact === 'LOW'
@@ -238,11 +239,11 @@ export const ControlCard: React.FC<ControlCardProps> = ({
           {/* Cross-Framework Mappings (Inheritance Bridges) */}
           {control.mappings && control.mappings.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-              <span className="text-xs font-mono font-semibold text-slate-400 uppercase">Equivalencies:</span>
+              <span className="text-xs font-mono font-semibold text-slate-400 uppercase">Reference only:</span>
               {control.mappings.slice(0, 4).map((m, idx) => (
                 <span
                   key={idx}
-                  title={`${m.targetFramework}: ${m.targetTitle || m.targetControlId}`}
+                  title={`${FRAMEWORK_REGISTRY[m.targetFramework]?.shortName ?? m.targetFramework} (reference): ${m.targetTitle || m.targetControlId}`}
                   className="text-xs font-mono px-2 py-0.5 rounded bg-indigo-950/50 text-indigo-300 border border-indigo-500/30"
                 >
                   {m.targetControlId}

@@ -20,7 +20,7 @@ import { getFrameworkTitle } from '../../data/frameworks';
 import { frameworkGuidance } from '../../data/frameworkGuidance';
 
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
-import { NOT_RECORDED, NO_CSP_RECORDED } from '../../data/reports/documentDefaults';
+import { NOT_RECORDED, NO_CSP_RECORDED, SIGNATURE_BLANK, UNSIGNED_ATTESTATION_NOTE } from '../../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { composeImplementationStatement } from '../../data/cmmcGuide/sspStatement';
 import { statusDisplayLabel } from '../../data/statusLabels';
@@ -955,18 +955,20 @@ export const SSPBuilder: React.FC = () => {
               5. Formal Attestation & Self-Assessment Approval
             </h2>
 
+            <p className="text-xs text-slate-500 italic">{UNSIGNED_ATTESTATION_NOTE}</p>
+
             <p className="text-xs text-slate-700 leading-relaxed">
               I, the undersigned Senior Official / System Owner, hereby certify that the information contained within this System Security Plan (SSP) accurately reflects the security safeguards implemented within <strong>{meta.systemName}</strong> for <strong>{meta.organizationName}</strong> in accordance with {guidance.authority} and {frameworkTitle} standards.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6">
               <div className="border-t border-slate-900 pt-2">
-                <p className="text-xs font-bold text-slate-900">{meta.systemOwner}</p>
+                <p className="text-xs font-bold text-slate-900">Name: {SIGNATURE_BLANK}</p>
                 <p className="text-[11px] text-slate-500">System Owner / Authorized Representative Signature</p>
               </div>
 
               <div className="border-t border-slate-900 pt-2">
-                <p className="text-xs font-bold text-slate-900">{meta.assessmentDate}</p>
+                <p className="text-xs font-bold text-slate-900">Date: {SIGNATURE_BLANK}</p>
                 <p className="text-[11px] text-slate-500">Date of Attestation</p>
               </div>
             </div>

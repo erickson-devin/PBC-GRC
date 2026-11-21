@@ -2469,7 +2469,7 @@ export const ApiClient = {
   async getStorageInfo(
     tenantId: string,
     sessionRef?: string | null
-  ): Promise<{ provider: string; localStoragePath: string; isAirGapped: boolean } | null> {
+  ): Promise<{ provider: string; localStoragePath?: string; isAirGapped: boolean } | null> {
     // The caller can pass the session reference itself: right after sign-in it is not in browser storage yet.
     const res = await apiFetch(`${API_BASE_URL}/api/v1/evidence/config/storage-info`, {
       method: 'GET',

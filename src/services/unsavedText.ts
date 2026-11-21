@@ -164,18 +164,26 @@ export function unsavedProgramFields(
   return out;
 }
 
-/** SSP metadata fields being edited that differ from the server's copy. No live copy loaded (null) means nothing is reported. */
+/**
+ * SSP metadata fields being edited that differ from the server's copy. No live copy loaded (null) means nothing is reported.
+ * `defaults` (the values a blank form shows: the tenant's name, today's date) are what a field is compared to where the server has no value,
+ * so text the form filled in by itself is not reported as typed; the assessment date, refreshed daily, is then skipped while the server has none.
+ */
 export function unsavedSspMetadataFields(
   draft: Partial<Record<string, string | null | undefined>>,
   saved: Partial<Record<string, string | null | undefined>> | null | undefined,
   programId: string,
+  defaults?: Partial<Record<string, string | null | undefined>>,
 ): UnsavedTextEntry[] {
   if (!saved) return [];
   const out: UnsavedTextEntry[] = [];
   for (const field of SSP_METADATA_FIELDS) {
     const text = draft[field] ?? '';
     if (!text) continue;
-    if (text !== (saved[field] ?? '')) out.push({ key: `ssp:${programId}:${field}`, label: `SSP field, ${field}`, text });
+    const savedText = saved[field];
+    if (defaults && field === 'assessmentDate' && !savedText) continue;
+    const baseline = defaults && !(typeof savedText === 'string' && savedText !== '') ? defaults[field] ?? '' : savedText ?? '';
+    if (text !== baseline) out.push({ key: `ssp:${programId}:${field}`, label: `SSP field, ${field}`, text });
   }
   return out;
 }

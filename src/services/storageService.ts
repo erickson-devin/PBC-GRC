@@ -20,6 +20,7 @@ import type { SspProfile } from '../types/sspProfile';
 import { sspIdentificationItems, sspMaintenanceExceptions, sspMaintenanceItems, sspRoleLines } from '../data/ssp/sspOutput';
 import { sspInventoryMarkdown, type SspInventorySnapshot } from '../data/inventory/sspInventory';
 import { sspDocumentsMarkdown, type SspDocumentsSnapshot } from '../data/documents/sspDocuments';
+import { localDateIso } from '../utils/localDate';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -74,7 +75,7 @@ export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
     samStatus: tenant.samStatus || 'NOT_REGISTERED',
     systemOwner: tenant.systemOwner || '',
     authorName: '',
-    assessmentDate: new Date().toISOString().split('T')[0],
+    assessmentDate: localDateIso(),
     systemBoundaryScope: tenant.systemBoundaryScope || '',
     systemEnvironment: '',
     cloudServiceProviders: '',

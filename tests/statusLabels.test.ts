@@ -32,7 +32,9 @@ console.log('--- Drift ---');
 const ID = 'AC.L1-3.1.1';
 for (const s of ALL.filter((x) => x !== 'MET')) {
   const text = composeImplementationStatement(ID, '', { [`${ID}[a]`]: { status: s, implementationNarrative: 'X' } }, 'CMMC_L2').text;
-  assert(text.startsWith(`[a] (${statusDisplayLabel(s)}) `), `L5: the SSP prefix for ${s} is the screen label`, text);
+  // #324: a Not applicable objective prints its reason after the label and a colon.
+  const prefix = s === 'NOT_APPLICABLE' ? `[a] ${statusDisplayLabel(s)}: ` : `[a] (${statusDisplayLabel(s)}) `;
+  assert(text.startsWith(prefix), `L5: the SSP prefix for ${s} is the screen label`, text);
 }
 for (const s of ['NOT_MET', 'IN_PROGRESS', 'NOT_STARTED'] as const) {
   assert(statusBadgeClass(statusDisplayLabel(s)) !== null, `L6: ${statusDisplayLabel(s)} has an export badge`);

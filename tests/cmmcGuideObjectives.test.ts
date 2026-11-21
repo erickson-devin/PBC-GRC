@@ -3,7 +3,7 @@ import path from 'path';
 import l2Json from '../src/data/cmmcGuide/cmmcL2Guide.generated.json';
 import l1Json from '../src/data/cmmcGuide/cmmcL1Guide.generated.json';
 import { CMMC_L1_GUIDE, CMMC_L2_GUIDE, CMMC_OBJECTIVE_CATALOG_REV, cmmcGuideTitle, cmmcNumberOf, guideObjectives, withGuideTitle } from '../src/data/cmmcGuide/guide';
-import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, normalizeObjectiveText } from '../src/data/cmmcGuide/objectives';
+import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, normalizeObjectiveText, starterTemplateVariants } from '../src/data/cmmcGuide/objectives';
 import { controlStatusAfterCatalogUpdate, migrateCachedObjectives, objectiveStatusAfterCatalogUpdate } from '../src/data/cmmcGuide/migration';
 import { checklistLetterOf, uncoveredChecklistLetters, uncoveredChecklistText } from '../src/data/cmmcGuide/importLetters';
 import { validateGuideData } from '../src/data/cmmcGuide/validate';
@@ -168,6 +168,20 @@ assert(idx('AC.L1-3.1.1', 'a').scapRuleId === 'account_unique_id', 'G14: AC.L1-3
 assert(idx('AC.L1-3.1.1', 'f').scapRuleId === 'wireless_disable_interfaces', 'G14: AC.L1-3.1.1[f] takes its scapRuleId from the 3.1.1 entry', idx('AC.L1-3.1.1', 'f').scapRuleId);
 const r31311 = NIST_800_171A_REGISTRY['3.13.11'].objectives.find((o) => o.letter === 'a')!;
 assert(idx('SC.L2-3.13.11', 'a').prefilledTemplate === r31311.prefilledTemplate, 'G14: SC.L2-3.13.11[a] carries the registry template');
+
+// Level 2 is about CUI: the number-keyed template (CUI wording) wins over the FAR entry's (FCI wording)
+const FCI = /\bFCI\b|Federal Contract Information/;
+const t311a = NIST_800_171A_REGISTRY['3.1.1'].objectives[0].prefilledTemplate;
+const farA = NIST_800_171A_REGISTRY['AC.L1-b.1.i'].objectives[0].prefilledTemplate;
+assert(idx('AC.L1-3.1.1', 'a').prefilledTemplate === t311a && !FCI.test(idx('AC.L1-3.1.1', 'a').prefilledTemplate), 'G14b: AC.L1-3.1.1[a] in a Level 2 program takes the 3.1.1 template, without FCI wording', idx('AC.L1-3.1.1', 'a').prefilledTemplate);
+assert(idx('AC.L1-3.1.1', 'a').scapRuleId === NIST_800_171A_REGISTRY['AC.L1-b.1.i'].objectives[0].scapRuleId && idx('AC.L1-3.1.1', 'a').scapRuleId === 'account_unique_id', 'G14b: its scapRuleId is still the FAR entry\'s');
+assert(idx('AC.L1-3.1.1', 'a', 'CMMC_L1').prefilledTemplate === farA, 'G14b: the Level 1 template of the same control is unchanged', idx('AC.L1-3.1.1', 'a', 'CMMC_L1').prefilledTemplate);
+const variants311 = starterTemplateVariants('AC.L1-3.1.1', 'a', 'CMMC_L2');
+assert(variants311.length === 2 && variants311.includes(t311a.trim()) && variants311.includes(farA.trim()), 'G14b: starterTemplateVariants lists both templates of AC.L1-3.1.1[a]', variants311.length);
+const variants318 = starterTemplateVariants('AC.L2-3.1.8', 'a', 'CMMC_L2');
+assert(variants318.length === 0, 'G14b: starterTemplateVariants of a letter with no hand-written template is empty', variants318);
+const fciLeft = l2Controls.reduce((n, c) => n + getControlObjectives(c.id, undefined, undefined, undefined, 'CMMC_L2').filter((o) => FCI.test(o.prefilledTemplate)).length, 0);
+console.log(`  (Level 2 objectives whose template still matches the FCI pattern: ${fciLeft})`);
 
 // an independent count of the Level 2 objectives that keep a hand-written template
 const norm = (s: string) => s.toLowerCase().replace(/federal contract information/g, 'fci').replace(/controlled unclassified information/g, 'cui').replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|a|an)\b/g, ' ').replace(/\s+/g, ' ').trim();

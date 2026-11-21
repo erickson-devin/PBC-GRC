@@ -20,10 +20,12 @@ import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
 import { AssessmentObjective, ObjectiveStatus } from '../../types/assessment';
 import { calculateControlRollup } from '../../data/frameworks/assessmentObjectives';
-import { hasWrittenTemplate } from '../../data/cmmcGuide/objectives';
+import { hasWrittenTemplate, starterTemplateVariants } from '../../data/cmmcGuide/objectives';
+import { normalizeLegacyTemplateSections } from '../../data/cmmcGuide/sspStatement';
+import { notApplicableReasonDraft, notApplicableReasonError } from '../../data/objectiveNotApplicable';
 import { cmmcGuideLetter, cmmcGuideObjectiveId } from '../../data/cmmcGuide/displayId';
 import { objectiveNotInChecklist, previousStatusBadge } from '../../data/cmmcGuide/catalogUpdateReview';
-import { planConfirmAll, confirmAllResultMessage, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
+import { planConfirmAll, confirmAllResultMessage, confirmAllTitle, confirmAllConfirmLabel, confirmAllIntro, type ConfirmAllPlan } from '../../data/confirmAllTemplates';
 import { statusDisplayLabel } from '../../data/statusLabels';
 import { objectiveSspBadge, objectiveNarrativesInSsp } from '../../data/cmmcGuide/sspStatementView';
 import { objectiveSaveView, objectiveSaveAnnouncement } from '../../data/objectiveSaveState';
@@ -100,6 +102,9 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   const [bulkResult, setBulkResult] = useState<{ filled: number; skipped: number } | null>(null);
   const [showEvidenceSelectorForId, setShowEvidenceSelectorForId] = useState<string | null>(null);
   const [pendingPlan, setPendingPlan] = useState<ConfirmAllPlan | null>(null);
+  // The reason box that opens before an objective is marked Not applicable (the text may contain CUI: it lives here only until saved)
+  const [naDialog, setNaDialog] = useState<{ objId: string; text: string; touched: boolean } | null>(null);
+  const naReasonId = useId();
 
   // Per-objective save line: announced politely (never moves focus); Retry hands focus to the line it replaces
   const saveLineRefs = useRef(new Map<string, HTMLParagraphElement>());
@@ -216,15 +221,45 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     }));
   };
 
-  const handleStatusClick = (objId: string, status: ObjectiveStatus) => {
-    if (!canEdit) return;
-    updateObjectiveStatus(objId, status);
+  // Every text that is the objective's starter wording (today's template and the older ones): none of them is an answer or a reason
+  const starterTexts = (o: AssessmentObjective): string[] =>
+    [o.prefilledTemplate, ...starterTemplateVariants(controlId, o.letter, activeFramework)].filter((t) => (t ?? '').trim() !== '');
+
+  const reportRolledStatus = (objId: string, status: ObjectiveStatus) => {
     if (onStatusChange) {
       // Pass the rolled up status to parent if needed
       const updatedObjs = objectives.map((o) => (o.id === objId ? { ...o, status } : o));
       const nextRollup = calculateControlRollup(updatedObjs);
       onStatusChange(nextRollup.calculatedStatus);
     }
+  };
+
+  const handleStatusClick = (obj: AssessmentObjective, status: ObjectiveStatus) => {
+    if (!canEdit) return;
+    if (status === 'NOT_APPLICABLE') {
+      // The objective's narrative is the reason it does not apply (the SSP prints it): ask for it before saving anything
+      setNaDialog({ objId: obj.id, text: notApplicableReasonDraft(obj, editingNarratives[obj.id], starterTexts(obj)), touched: false });
+      return;
+    }
+    updateObjectiveStatus(obj.id, status);
+    reportRolledStatus(obj.id, status);
+  };
+
+  const handleConfirmNotApplicable = () => {
+    const dialog = naDialog;
+    const obj = dialog ? objectives.find((o) => o.id === dialog.objId) : undefined;
+    if (!dialog || !obj) return;
+    if (notApplicableReasonError(dialog.text, starterTexts(obj)) !== null) {
+      setNaDialog({ ...dialog, touched: true });
+      return;
+    }
+    setNaDialog(null);
+    if (!canEdit) return;
+    updateObjectiveStatus(obj.id, 'NOT_APPLICABLE', dialog.text.trim());
+    // The box keeps the reason: once saved it equals the stored narrative (no longer a draft); if the save fails it stays on screen for Retry
+    const reason = dialog.text.trim();
+    setEditingNarratives((prev) => ({ ...prev, [obj.id]: reason }));
+    reportRolledStatus(obj.id, 'NOT_APPLICABLE');
   };
 
   // A template is sample wording: the objective goes to In progress (a MET or N/A objective keeps its status), never straight to MET
@@ -254,15 +289,12 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     }
   };
 
-  // Ask first when the apply would overwrite notes or narratives that already hold text
+  // Always ask first: the fill writes draft wording, and may overwrite notes or narratives that already hold text
   const handleBulkApplyAll = () => {
     if (!canEdit) return;
-    const plan = planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '', hasTemplate);
+    const plan = planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '', hasTemplate, !objectiveNarrativesInSsp(controlId, activeFramework));
     if (plan.filled.length === 0) return;
-    if (!plan.needsConfirmation) {
-      applyAll(plan);
-      return;
-    }
+    // Starter text is a draft: the fill is always confirmed, never applied straight from the button
     setPendingPlan(plan);
   };
 
@@ -292,8 +324,13 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
   const handleRetrySave = (obj: AssessmentObjective) => {
     const e = objectiveSaves[obj.id];
     if (!canEdit || e?.state !== 'failed') return;
-    if (e.status) updateObjectiveStatus(obj.id, e.status);
-    if (e.narrative && editingNarratives[obj.id] !== undefined) updateObjectiveNarrative(obj.id, editingNarratives[obj.id]);
+    const draft = editingNarratives[obj.id];
+    // A Not applicable answer goes out with its reason in one write, as it did the first time
+    if (e.status === 'NOT_APPLICABLE' && draft !== undefined && draft.trim() !== '') updateObjectiveStatus(obj.id, e.status, draft.trim());
+    else {
+      if (e.status) updateObjectiveStatus(obj.id, e.status);
+      if (e.narrative && draft !== undefined) updateObjectiveNarrative(obj.id, draft);
+    }
     requestAnimationFrame(() => saveLineRefs.current.get(obj.id)?.focus());
   };
 
@@ -301,6 +338,9 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
     rollup.totalObjectives > 0
       ? Math.round(((rollup.metCount + rollup.notApplicableCount) / rollup.totalObjectives) * 100)
       : 0;
+
+  // The notes as the SSP prints them: an older starter section the notes still hold is not text a narrative can be a copy of
+  const sspNotes = normalizeLegacyTemplateSections(controlId, state.controls[controlId]?.implementationNotes ?? '', objectives, activeFramework);
 
   return (
     <div className="space-y-6">
@@ -396,8 +436,9 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
         >
           <div className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <DialogTitle as="h3" className="text-sm font-bold text-white">Replace with the starter templates?</DialogTitle>
+            <DialogTitle as="h3" className="text-sm font-bold text-white">{confirmAllTitle(pendingPlan)}</DialogTitle>
             <div className="space-y-3 text-xs text-slate-300 leading-relaxed">
+              <p>{confirmAllIntro(pendingPlan.filled.length)}</p>
               {pendingPlan.notesReplaced && (
                 <p>The control's implementation notes ({(state.controls[controlId]?.implementationNotes ?? '').length} characters) will be replaced with {pendingPlan.filled.length} template sections.</p>
               )}
@@ -422,12 +463,60 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                 Cancel
               </button>
               <button type="button" onClick={handleConfirmReplace} className="btn-accent px-4 py-2 rounded-xl text-xs">
-                Replace
+                {confirmAllConfirmLabel(pendingPlan)}
               </button>
             </div>
           </div>
         </DialogOverlay>
       )}
+
+      {naDialog && (() => {
+        const naObj = objectives.find((o) => o.id === naDialog.objId);
+        if (!naObj) return null;
+        const naError = notApplicableReasonError(naDialog.text, starterTexts(naObj));
+        const showError = naError !== null && naDialog.touched;
+        return (
+          <DialogOverlay
+            onClose={() => setNaDialog(null)}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn"
+          >
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleConfirmNotApplicable(); }}
+              className="w-full max-w-md rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <DialogTitle as="h3" className="text-sm font-bold text-white">Why does objective [{shownLetter(naObj.letter)}] not apply?</DialogTitle>
+              <div className="space-y-2">
+                <label htmlFor={`${naReasonId}-reason`} className="text-xs font-medium text-slate-300">Reason</label>
+                <textarea
+                  id={`${naReasonId}-reason`}
+                  autoFocus
+                  rows={4}
+                  value={naDialog.text}
+                  onChange={(e) => setNaDialog({ ...naDialog, text: e.target.value, touched: true })}
+                  onBlur={() => setNaDialog((d) => (d ? { ...d, touched: true } : d))}
+                  aria-invalid={showError}
+                  aria-describedby={`${naReasonId}-help${showError ? ` ${naReasonId}-error` : ''}`}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 focus:border-cyan-500/50 transition-all font-sans leading-relaxed"
+                />
+                <p id={`${naReasonId}-help`} className="text-xs text-slate-400">The reason prints in the SSP for this objective.</p>
+                {showError && <p id={`${naReasonId}-error`} className="text-xs text-rose-300">{naError}</p>}
+              </div>
+              <div className="flex items-center justify-end gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setNaDialog(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button type="submit" disabled={naError !== null} className="btn-accent px-4 py-2 rounded-xl text-xs disabled:opacity-50">
+                  Mark Not applicable
+                </button>
+              </div>
+            </form>
+          </DialogOverlay>
+        );
+      })()}
 
       <p role="status" aria-live="polite" className="sr-only">{saveAnnouncement}</p>
       <div role="status" aria-live="polite">
@@ -454,7 +543,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
           const narrativeId = `${narrativeBaseId}-${obj.letter}`;
           const hasDraft = editingNarratives[obj.id] !== undefined && editingNarratives[obj.id] !== obj.implementationNarrative;
           const saveView = objectiveSaveView(objectiveSaves[obj.id], { serverBacked: Boolean(currentTenant.serverBacked), canEdit, hasDraft });
-          const sspBadge = objectiveSspBadge(controlId, activeFramework, obj, state.controls[controlId]?.implementationNotes ?? '');
+          const sspBadge = objectiveSspBadge(controlId, activeFramework, obj, sspNotes);
 
           // Compute effective ODPs
           const effectiveOdps =
@@ -543,7 +632,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                           key={s.id}
                           type="button"
                           aria-pressed={isSelected}
-                          onClick={() => { if (!isSelected) handleStatusClick(obj.id, s.id); }}
+                          onClick={() => { if (!isSelected) handleStatusClick(obj, s.id); }}
                           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                             isSelected
                               ? `${s.active} shadow-sm underline underline-offset-4 decoration-2`
@@ -735,7 +824,7 @@ export const ObjectiveChecklist: React.FC<ObjectiveChecklistProps> = ({
                   <div className="flex items-center gap-2 flex-wrap">
                   <label htmlFor={narrativeId} className="text-xs font-medium text-slate-300 flex items-center gap-2">
                     <FileText className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
-                    <span>Narrative for objective [{shownLetter(obj.letter)}]</span>
+                    <span>{obj.status === 'NOT_APPLICABLE' ? `Reason objective [${shownLetter(obj.letter)}] does not apply` : `Narrative for objective [${shownLetter(obj.letter)}]`}</span>
                   </label>
                   {sspBadge && (
                     <span id={`${narrativeId}-ssp`} className={`text-xs font-mono px-1.5 py-0.5 rounded border ${sspBadge.kind === 'prints' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : sspBadge.kind === 'starter' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-slate-800 text-slate-300 border-slate-700'}`}>{sspBadge.text}</span>

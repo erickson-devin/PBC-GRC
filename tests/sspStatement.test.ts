@@ -3,7 +3,9 @@ import path from 'node:path';
 import { cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import { cmmcGuideLetter } from '../src/data/cmmcGuide/displayId';
 import { getControlObjectives, hasWrittenTemplate } from '../src/data/cmmcGuide/objectives';
-import { composeImplementationStatement, objectiveNarrativePrints } from '../src/data/cmmcGuide/sspStatement';
+import { NIST_800_171A_REGISTRY } from '../src/data/frameworks/assessmentObjectives';
+import { stripInlineBold } from '../src/utils/markdownBlocks';
+import { NO_NOT_APPLICABLE_REASON, composeImplementationStatement, objectiveNarrativePrints } from '../src/data/cmmcGuide/sspStatement';
 import type { ObjectiveAnswer } from '../src/data/cmmcGuide/sspStatement';
 import type { ObjectiveStatus } from '../src/types/assessment';
 
@@ -44,7 +46,7 @@ assert(compose('Policy X.', two).text === `Policy X.\n\n[${a}] A\n\n[${c}] C`, '
 assert(compose('Policy X.', ans(a, 'MET', '')).text === 'Policy X.' && compose('N', ans(a, 'MET', null)).text === 'N', 'P4: an empty narrative is skipped');
 assert(compose('', ans(b, 'NOT_MET', 'Plan')).text === `[${b}] (Not met) Plan`, 'P5: Not met prints with its prefix');
 assert(compose('', ans(b, 'IN_PROGRESS', 'Plan')).text === `[${b}] (In progress) Plan`, 'P6: In progress prints with its prefix');
-assert(compose('', ans(b, 'NOT_APPLICABLE', 'Plan')).text === `[${b}] (Not applicable) Plan`, 'P7: Not applicable prints with its prefix');
+assert(compose('', ans(b, 'NOT_APPLICABLE', 'Plan')).text === `[${b}] Not applicable: Plan`, 'P7: Not applicable prints its narrative as the reason');
 assert(compose('', ans(b, 'NOT_STARTED', 'Plan')).text === `[${b}] (Not started) Plan`, 'P7b: Not started prints with its prefix');
 
 const written = L.find((l) => hasWrittenTemplate(ID, l, L2));
@@ -52,7 +54,7 @@ const starter = written ? getControlObjectives(ID, undefined, undefined, undefin
 assert(!!written && starter.trim() !== '', 'setup: the control has a letter with a written starter template', written);
 if (written) {
   assert(compose('', ans(written, 'IN_PROGRESS', starter)).text === '', 'P8: unedited starter text is skipped while the objective is not Met');
-  assert(compose('', ans(written, 'MET', starter)).text === `[${written}] ${starter.trim()}`, 'P8b: the same text prints once the objective is Met');
+  assert(compose('', ans(written, 'MET', starter)).text === `[${written}] ${stripInlineBold(starter.trim())}`, 'P8b: the same text prints once the objective is Met');
   assert(compose('', ans(written, 'IN_PROGRESS', `${starter} Edited.`)).text.includes('(In progress)'), 'P8c: edited starter text prints');
 }
 
@@ -79,6 +81,30 @@ if (pe) assert(compose('', ans(pe.letter, 'MET', 'Door', pe.id), pe.id, L1).text
 assert(compose('', ans('z', 'MET', 'Gone')).text === '', 'P13: a letter that is not in the guide is not printed');
 assert(compose('', ans(a, 'MET', '  x  ')).text === `[${a}] x`, 'P14: the narrative is trimmed');
 assert(compose('Notes  \n\n', ans(a, 'MET', 'x')).text === `Notes\n\n[${a}] x`, 'P14b: trailing whitespace of the notes is trimmed before the join');
+
+console.log('--- Legacy template sections, Not applicable, bold ---');
+const rowsL2 = getControlObjectives(ID, undefined, undefined, undefined, L2);
+const textA = rowsL2.find((r) => r.letter === a)!.text;
+const textB = rowsL2.find((r) => r.letter === b)!.text;
+const TA = rowsL2.find((r) => r.letter === a)!.prefilledTemplate;
+const TB = rowsL2.find((r) => r.letter === b)!.prefilledTemplate;
+const legacyA = `[Objective ${a.toUpperCase()} - ${textA}]:\n${TA}`;
+const legacyB = `[Objective ${b.toUpperCase()} - ${textB}]:\n${TB}`;
+assert(compose(legacyA, {}).text === '', 'L1: a legacy section with unedited starter text prints nothing');
+assert(compose(legacyA, ans(a, 'MET', TA)).text === `[${a}] ${stripInlineBold(TA)}`, 'L2: the same text printed once, as a typed narrative, once the objective is Met');
+assert(compose(`Preamble.\n\n[Objective ${a.toUpperCase()} - ${textA}]:\nOur own text.`, {}).text === `Preamble.\n\n[${a}] Our own text.`, 'L3: an edited legacy section gets the letter label');
+assert(compose(`${legacyA}\n\n[Objective ${b.toUpperCase()} - ${textB}]:\nEdited B`, {}).text === `[${b}] Edited B`, 'L4: only the edited section prints');
+assert(compose(`${legacyA.replace(/\n/g, '\r\n')}\r\n\r\n${legacyB.replace(/\n/g, '\r\n')}`, {}).text === '', 'L4b: CRLF notes with two starter sections print nothing');
+assert(compose('[Objective A - x]:\nT', undefined, 'AC-2', 'NIST_800_53_REV5').text === '[Objective A - x]:\nT', 'L5: another framework keeps its notes');
+assert(compose('', ans(b, 'NOT_APPLICABLE', '')).text === `[${b}] Not applicable: ${NO_NOT_APPLICABLE_REASON}` && NO_NOT_APPLICABLE_REASON === 'no reason is recorded.', 'N1: Not applicable with no reason still prints a line');
+assert(compose('', ans(b, 'NOT_APPLICABLE', TB)).text === `[${b}] Not applicable: no reason is recorded.`, 'N2: Not applicable with its own starter text prints no reason');
+const na3 = compose('', ans(b, 'NOT_APPLICABLE', 'No wireless in scope.'));
+assert(na3.text === `[${b}] Not applicable: No wireless in scope.` && na3.objectiveLetters.join() === b, 'N3: Not applicable prints its reason', na3);
+assert(compose('We said: No wireless in scope.', ans(b, 'NOT_APPLICABLE', 'No wireless in scope.')).text === `We said: No wireless in scope.\n\n[${b}] Not applicable: No wireless in scope.`, 'N4: the reason prints even when the notes contain it');
+const farA = NIST_800_171A_REGISTRY['AC.L1-b.1.i'].objectives[0].prefilledTemplate;
+assert(compose('', ans(a, 'IN_PROGRESS', farA)).text === '', 'N5: an older starter text (the FAR template) is still starter text');
+assert(compose('Uses **Entra ID**.', {}).text === 'Uses Entra ID.', 'X1: bold marks are removed from the notes');
+assert(compose('**X**', undefined, 'AC-2', 'NIST_800_53_REV5').text === 'X', 'X2: and from another framework\'s notes');
 
 console.log('--- objectiveNarrativePrints ---');
 const o = (status: ObjectiveStatus, implementationNarrative: string, prefilledTemplate = 'T') => ({ status, implementationNarrative, prefilledTemplate });

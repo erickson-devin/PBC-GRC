@@ -204,6 +204,7 @@ assert(av6.declared === true && av6.names.length === 0 && same(av6.unlisted, ['x
 const programsPage = read('src/components/programs/ProgramsPage.tsx');
 assert(programsPage.includes('ArchivedProgramList') && programsPage.includes('Declared assets') && programsPage.includes('Declared no assets: its boundary was the whole inventory.') && programsPage.includes('max-h-40 overflow-y-auto') && programsPage.includes('openList.map((p) => renderCard(p))'), 'PV-A7 the archived list shows the declared assets and the open list does not pass the index');
 assert(!/console\./.test(programsPage) && !/localStorage|sessionStorage/.test(programsPage) && !programsPage.includes('updateProgramAssets'), 'PV-A7 the page logs nothing, stores nothing and never writes membership');
+assert(programsPage.includes('Open vulnerability items') && programsPage.includes('m?.controlPoam') && !programsPage.includes('>Open POA&amp;M<'), 'PV-A8 the card shows the POA&M control entries and labels the other tile as vulnerability items');
 
 console.log('--- no default program: first-program flow, defaults ---');
 const noProgramCtx = { supported: true, canEdit: true, hasActiveProgram: false, archived: false, status: 'loading' as const };

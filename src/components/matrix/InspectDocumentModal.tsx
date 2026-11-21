@@ -25,6 +25,8 @@ import {
   FileText,
   Sliders,
   AlertTriangle,
+  Lock,
+  ClipboardList,
 } from 'lucide-react';
 import { ControlStatus, EvidenceItem } from '../../types/cmmc';
 import { ComplianceFramework } from '../../types/framework';
@@ -33,7 +35,6 @@ import { NOTES_NOT_SAVED_DETAIL } from '../../data/controlSave';
 import { useTenant } from '../../context/TenantContext';
 import { withEffectiveStack } from '../../data/effectiveStackProfile';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
-import { storagePathLabel } from '../../data/audit/storageDriver';
 import {
   findControlDefinition,
   FRAMEWORK_REGISTRY,
@@ -56,6 +57,17 @@ import { NO_OBJECTIVE_TEMPLATE_RECORDED, NO_STACK_PROFILE_RECORDED } from '../..
 import { cmmcNumberOf, withGuideTitle } from '../../data/cmmcGuide/guide';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { statusDisplayLabel } from '../../data/statusLabels';
+import { frameworkGuidance } from '../../data/frameworkGuidance';
+import {
+  CONTROL_READ_ONLY_NOTE,
+  assessmentMethodBanner,
+  controlCatalogParameters,
+  metWithOpenParametersWarning,
+  parameterCounts,
+  parameterLinkLabel,
+  parameterSummaryText,
+  poamPointerText,
+} from '../../data/controlDialogView';
 import { controlHeaderView } from '../../data/cmmcGuide/controlStatusView';
 import { metRefusalMessage } from '../../data/cmmcGuide/controlStatusGuard';
 import { composeImplementationStatement } from '../../data/cmmcGuide/sspStatement';
@@ -110,6 +122,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     setPreviewEvidence,
     getObjectivesForControl,
     objectivesReady,
+    requestFocus,
   } = useAssessment();
 
   const { canEdit, currentTenant, activeFramework, setActiveFramework, programs, activeProgram, refreshLiveData } = useTenant();
@@ -303,6 +316,11 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
   // The recorded status (what is stored) and what the objectives add up to are told apart; Met is refused while objectives are open
   const statusEditable = canEdit && notesEditable;
   const storedStatus = ctrlState.status as ControlStatus;
+  const paramCounts = parameterCounts(controlCatalogParameters(control), ctrlState.implementationNotes || '');
+  const paramSummary = parameterSummaryText(paramCounts, notesEditable);
+  const paramWarning = notesEditable ? metWithOpenParametersWarning(storedStatus, paramCounts) : null;
+  const poamPointer = poamPointerText(storedStatus, frameworkGuidance(activeFramework).poamPermitted);
+  const method = assessmentMethodBanner(control.framework, activeFramework);
   const header = objectivesReady
     ? controlHeaderView({ controlId: control.id, framework: activeFramework, stored: storedStatus, objectives })
     : { metRefusal: null, note: null };
@@ -312,6 +330,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
     if (storedStatus === next) return;                       // no duplicate save or ledger entry
     const d = updateControlStatus(control.id, next);
     if (!d.allowed) announce(metRefusalMessage(d));
+    else if (next === 'MET' && notesEditable && paramCounts.open > 0) announce(metWithOpenParametersWarning('MET', paramCounts) ?? '');
   };
   const handleFixStatus = (to: ControlStatus) => {
     const d = updateControlStatus(control.id, to);
@@ -372,6 +391,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
       setSelectedControlId(null);
     }
   };
+
+  const handleOpenPoam = () => { handleClose(); requestFocus('poam_control', control.id, 'poam'); };
 
   const handlePrev = () => {
     clearFocusObjective();
@@ -505,37 +526,50 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             {frameworkControls.length > 0 && (
               <div className="flex items-center gap-1 mr-2 bg-slate-800 rounded-xl p-1 border border-slate-700">
                 <button
+                  type="button"
                   onClick={handlePrev}
                   disabled={controlIndex <= 0}
                   className="p-1 rounded-lg text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
                   title="Previous Control"
+                  aria-label="Previous control"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="w-4 h-4" aria-hidden="true" />
                 </button>
                 <span className="text-xs font-mono text-slate-400 px-1">
                   {controlIndex >= 0 ? `${controlIndex + 1}/${frameworkControls.length}` : control.id}
                 </span>
                 <button
+                  type="button"
                   onClick={handleNext}
                   disabled={controlIndex < 0 || controlIndex === frameworkControls.length - 1}
                   className="p-1 rounded-lg text-slate-400 hover:text-white disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
                   title="Next Control"
+                  aria-label="Next control"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronRight className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             )}
 
             {/* Fluid Close Trigger */}
             <button
+              type="button"
               onClick={handleClose}
               className="modal-close-trigger p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors"
               title="Close modal"
+              aria-label="Close"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
         </div>
+
+        {!canEdit && (
+          <p className="px-6 py-2 bg-slate-950/60 border-b border-slate-800 text-xs text-slate-300 flex items-center gap-2 shrink-0">
+            <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" aria-hidden="true" />
+            <span>{CONTROL_READ_ONLY_NOTE}</span>
+          </p>
+        )}
 
         {/* ── Title & Status Strip ── */}
         <div className="px-6 py-4 bg-slate-900 border-b border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
@@ -597,6 +631,32 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 )}
               </div>
             )}
+            {paramWarning && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-amber-300 md:justify-end">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>{paramWarning}</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('narrative')}
+                  className="px-2 py-0.5 rounded-lg border border-amber-500/40 bg-amber-500/10 font-semibold text-amber-200 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                >
+                  Open the SSP tab
+                </button>
+              </div>
+            )}
+            {poamPointer && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 md:justify-end">
+                <ClipboardList className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>{poamPointer}</span>
+                <button
+                  type="button"
+                  onClick={handleOpenPoam}
+                  className="px-2 py-0.5 rounded-lg border border-slate-700 bg-slate-800 font-semibold text-cyan-300 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+                >
+                  Open the POA&amp;M
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -605,22 +665,12 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
             onReload={() => { void refreshLiveData().catch(() => undefined); void rev2.reload(); }} />
         )}
 
-        {/* ── MANDATORY C3PAO ASSESSMENT METHOD BANNER ── */}
+        {/* ── Assessment method banner (follows the program's framework, #326) ── */}
         <div className="px-6 py-3 bg-gradient-to-r from-cyan-950/70 via-slate-900 to-indigo-950/60 border-b border-cyan-500/30 flex items-center gap-3 shrink-0">
-          <ShieldAlert className="w-5 h-5 text-cyan-400 shrink-0 animate-pulse motion-reduce:animate-none" />
+          <ShieldAlert className="w-5 h-5 text-cyan-400 shrink-0 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
           <div className="min-w-0">
-            <p className="text-xs font-bold text-cyan-200 tracking-wide">
-              {control.framework === 'NIST_800_171_R3'
-                ? 'Assessment method: all objectives must be satisfied for overall control compliance.'
-                : 'C3PAO Assessment Method: All objectives must be satisfied for overall control compliance.'}
-            </p>
-            <p className="text-xs text-slate-400">
-              {control.framework === 'NIST_800_53_REV5'
-                ? 'Under NIST SP 800-53A, each determination statement of the control must be evaluated and verified as Met or Not applicable. Any objective that is Not met drops the parent control to Not met.'
-                : control.framework === 'NIST_800_171_R3'
-                ? 'Under NIST SP 800-171A Rev. 3, each determination statement of the requirement must be evaluated and recorded as Met or Not applicable. Any objective that is Not met drops the requirement to Not met.'
-                :'Under DoD CMMC Assessment Guide Level 2 and NIST SP 800-171A, each determination statement [a], [b], [c]... must be evaluated and verified as Met or Not applicable. Any objective that is Not met drops the parent control to Not met.'}
-            </p>
+            <p className="text-xs font-bold text-cyan-200 tracking-wide">{method.title}</p>
+            <p className="text-xs text-slate-400">{method.body}</p>
           </div>
         </div>
 
@@ -732,6 +782,13 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                 <strong className="text-slate-200">Audit view.</strong> Assess each determination statement and see what an SSP import found for this control.
                 To write how the control is implemented, use the <button type="button" onClick={() => setActiveTab('narrative')} className="underline text-cyan-300 hover:text-cyan-200">System Security Plan (SSP)</button> tab.
               </p>
+              {paramSummary && (
+                <p className="text-xs text-slate-400 flex flex-wrap items-center gap-2">
+                  <Sliders className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  <span>{paramSummary}</span>
+                  <button type="button" onClick={() => setActiveTab('narrative')} className="underline text-cyan-300 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded">{parameterLinkLabel(paramCounts)}</button>
+                </p>
+              )}
               <ImportAnalysisPanel controlId={control.id} tenantId={currentTenant.id} programId={activeProgram?.id ?? null} />
               <ObjectiveChecklist controlId={control.id} focusObjective={focusObjective && focusObjective.controlId === control.id ? focusObjective : null} onFocusHandled={clearFocusObjective} />
             </div>
@@ -918,7 +975,6 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
               <div className="space-y-3">
                 {(() => {
                   const storageProvider = storageConfig.provider;
-                  const localStoragePath = storagePathLabel(storageConfig);
                   const isLocal = storageProvider === 'local';
 
                   return (
@@ -928,8 +984,8 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                       </h4>
                       {isLocal && (
                         <span className="badge inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-mono text-xs font-bold shadow-sm shadow-cyan-950/30">
-                          <HardDrive className="w-3 h-3 text-cyan-400" />
-                          <span>LOCAL ENCLAVE STORAGE{localStoragePath ? ` (${localStoragePath})` : ''}</span>
+                          <HardDrive className="w-3 h-3 text-cyan-400" aria-hidden="true" />
+                          <span>LOCAL ENCLAVE STORAGE</span>
                         </span>
                       )}
                     </div>
@@ -941,7 +997,7 @@ const InspectDocumentModalContent: React.FC<InspectDocumentModalProps> = ({
                   <Paperclip className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-300">No Evidence Uploaded Yet</p>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                    Attach screenshots, GPO exports, network configs, or policy sign-off documents to satisfy C3PAO audit requirements.
+                    Attach screenshots, GPO exports, network configs, or policy sign-off documents that show this control is in place.
                   </p>
                 </div>
               ) : (

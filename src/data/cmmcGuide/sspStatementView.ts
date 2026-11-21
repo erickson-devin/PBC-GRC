@@ -1,6 +1,7 @@
 import type { AssessmentObjective } from '../../types/assessment';
 import { statusDisplayLabel } from '../statusLabels';
 import { cmmcNumberOf } from './guide';
+import { starterTemplateVariants } from './objectives';
 import { GUARDED_FRAMEWORKS, composeImplementationStatement, objectiveNarrativePrints } from './sspStatement';
 import type { ObjectiveAnswer } from './sspStatement';
 
@@ -20,16 +21,23 @@ export type ObjectiveSspBadge = { kind: 'prints' | 'starter' | 'duplicate'; text
 export function objectiveSspBadge(
   controlId: string,
   framework: string,
-  o: Pick<AssessmentObjective, 'status' | 'implementationNarrative' | 'prefilledTemplate'>,
+  o: Pick<AssessmentObjective, 'status' | 'implementationNarrative' | 'prefilledTemplate'> & { letter?: string },
   notes: string
 ): ObjectiveSspBadge {
   if (!objectiveNarrativesInSsp(controlId, framework)) return null;
   const narrative = (o.implementationNarrative ?? '').trim();
+  // Older starter texts of this objective count as starter text too (given a letter, there is something to look them up by)
+  const starters = o.letter ? starterTemplateVariants(controlId, o.letter, framework) : [];
+  if (o.status === 'NOT_APPLICABLE') {
+    return objectiveNarrativePrints(o, notes, starters)
+      ? { kind: 'prints', text: 'Prints in the SSP as the Not applicable reason' }
+      : { kind: 'starter', text: 'Not applicable: write the reason here' };
+  }
   if (narrative === '') return null;
-  if (objectiveNarrativePrints(o, notes)) {
+  if (objectiveNarrativePrints(o, notes, starters)) {
     return { kind: 'prints', text: o.status === 'MET' ? 'Prints in the SSP' : `Prints in the SSP as ${statusDisplayLabel(o.status)}` };
   }
-  if (o.status !== 'MET' && narrative === (o.prefilledTemplate ?? '').trim()) {
+  if (o.status !== 'MET' && (narrative === (o.prefilledTemplate ?? '').trim() || starters.includes(narrative))) {
     return { kind: 'starter', text: 'Starter text: prints once Met' };
   }
   return { kind: 'duplicate', text: 'Already in the control statement' };

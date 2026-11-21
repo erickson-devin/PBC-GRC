@@ -87,6 +87,11 @@ export function parseInline(s: string): Inline[] {
   return out;
 }
 
+/** Plain text for a place that prints Markdown literally: removes `**bold**` pairs on one line, by the same rule as parseInline. */
+export function stripInlineBold(s: string): string {
+  return s.replace(/\*\*(?=\S)([^\n]*?\S)\*\*/g, '$1');
+}
+
 const HEADING = /^(#{1,6})\s+(.+)$/;
 const RULE = /^(-{3,}|\*{3,})\s*$/;
 const TABLE_SEPARATOR = /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;

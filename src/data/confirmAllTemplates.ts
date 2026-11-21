@@ -28,12 +28,14 @@ export const objectiveTemplateSection = (o: Pick<ConfirmAllObjective, 'letter' |
 export const planConfirmAll = (
   objectives: ConfirmAllObjective[],
   currentNotes: string,
-  hasTemplate: (o: ConfirmAllObjective) => boolean = () => true
+  hasTemplate: (o: ConfirmAllObjective) => boolean = () => true,
+  writesNotes = true
 ): ConfirmAllPlan => {
   const withTemplate = objectives.filter((o) => hasTemplate(o));
   const ref = (o: ConfirmAllObjective) => ({ id: o.id, letter: o.letter });
-  const notes = withTemplate.map(objectiveTemplateSection).join('\n\n');
-  const notesReplaced = withTemplate.length > 0 && currentNotes.trim() !== '' && currentNotes !== notes;
+  // Where the SSP prints the objective narratives itself (CMMC), the templates are written once, to the narratives: the notes are left alone
+  const notes = writesNotes ? withTemplate.map(objectiveTemplateSection).join('\n\n') : '';
+  const notesReplaced = writesNotes && withTemplate.length > 0 && currentNotes.trim() !== '' && currentNotes !== notes;
   const narrativesReplaced = withTemplate
     .filter((o) => (o.implementationNarrative || '').trim() !== '' && (o.implementationNarrative || '').trim() !== (o.prefilledTemplate || '').trim())
     .map(ref);
@@ -47,6 +49,22 @@ export const planConfirmAll = (
     needsConfirmation: notesReplaced || narrativesReplaced.length > 0,
   };
 };
+
+/** The title of the dialog that confirms the bulk fill: a warning when something is overwritten, else a plain count. */
+export const confirmAllTitle = (plan: ConfirmAllPlan): string => {
+  if (plan.needsConfirmation) return 'Replace with the starter templates?';
+  const n = plan.filled.length;
+  return `Fill ${n} objective${n === 1 ? '' : 's'} with starter text?`;
+};
+
+/** The label of its confirm button. */
+export const confirmAllConfirmLabel = (plan: ConfirmAllPlan): string => (plan.needsConfirmation ? 'Replace' : 'Fill objectives');
+
+/** What the dialog says first: starter text is a draft, not an answer. */
+export const confirmAllIntro = (n: number): string =>
+  n === 1
+    ? 'This fills 1 objective with starter text. Starter text is a draft: sample wording that may name products your organization does not use. Edit it to describe your environment, then mark it Met.'
+    : `This fills ${n} objectives with starter text. Starter text is a draft: sample wording that may name products your organization does not use. Edit each one to describe your environment, then mark each one Met.`;
 
 /** What the screen says after the apply: how many objectives were filled and how many were left without a template. */
 export const confirmAllResultMessage = (filled: number, skipped: number): string => {
