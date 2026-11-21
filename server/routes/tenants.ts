@@ -46,7 +46,7 @@ import { validateStackProfile } from '../../src/data/stackProfileSchema';
 
 const router = Router();
 
-const ALLOWED_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+const ALLOWED_FRAMEWORKS = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'];
 const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const CAGE_PATTERN = /^[A-Za-z0-9]{5}$/;
 

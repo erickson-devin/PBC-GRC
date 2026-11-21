@@ -1784,8 +1784,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     // Cascade tailored stack narratives to the objectives of the active program's framework, filling only the empty ones: a narrative
-    // somebody wrote is never overwritten. (SP 800-53 programs have their own objective ids and no stack templates: nothing to cascade.)
-    if (activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5') return;
+    // somebody wrote is never overwritten. (SP 800-53 and SP 800-171 Rev. 3 programs have their own objective ids and no stack templates: nothing to cascade.)
+    if (activeFramework === 'NIST_800_53_REV5' || activeFramework === 'nist-800-53-r5' || activeFramework === 'NIST_800_171_R3') return;
     const scope = scopeNow(currentTenant.id);
     if (!currentTenant.serverBacked) {
       // Browser-only: the assessment state owns the cache, so it applies the cascade itself

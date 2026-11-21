@@ -188,6 +188,27 @@ export const NIST_800_53_FAMILIES: PolicyFamilyItem[] = [
 
 const CMMC_L1_FAMILIES = ['AC', 'IA', 'MP', 'PE', 'SC', 'SI'];
 const CMMC_L2_FAMILIES = ['AC', 'AT', 'AU', 'CA', 'CM', 'IA', 'IR', 'MA', 'MP', 'PE', 'PS', 'RA', 'SC', 'SI'];
+// NIST SP 800-171 Rev. 3 has 17 families, keyed by the family number its requirements carry as `domain` ('03.01'): the 14 CMMC Level 2 families plus PL, SA and SR.
+// The policy generator picks a family's requirements by that domain, so the library keys them the same way; the SP 800-53 policy control stays the reference.
+const NIST_171_R3_FAMILIES: { code: string; letter: string; title: string }[] = [
+  { code: '03.01', letter: 'AC', title: 'Access Control' },
+  { code: '03.02', letter: 'AT', title: 'Awareness and Training' },
+  { code: '03.03', letter: 'AU', title: 'Audit and Accountability' },
+  { code: '03.04', letter: 'CM', title: 'Configuration Management' },
+  { code: '03.05', letter: 'IA', title: 'Identification and Authentication' },
+  { code: '03.06', letter: 'IR', title: 'Incident Response' },
+  { code: '03.07', letter: 'MA', title: 'Maintenance' },
+  { code: '03.08', letter: 'MP', title: 'Media Protection' },
+  { code: '03.09', letter: 'PS', title: 'Personnel Security' },
+  { code: '03.10', letter: 'PE', title: 'Physical Protection' },
+  { code: '03.11', letter: 'RA', title: 'Risk Assessment' },
+  { code: '03.12', letter: 'CA', title: 'Security Assessment and Monitoring' },
+  { code: '03.13', letter: 'SC', title: 'System and Communications Protection' },
+  { code: '03.14', letter: 'SI', title: 'System and Information Integrity' },
+  { code: '03.15', letter: 'PL', title: 'Planning' },
+  { code: '03.16', letter: 'SA', title: 'System and Services Acquisition' },
+  { code: '03.17', letter: 'SR', title: 'Supply Chain Risk Management' },
+];
 
 const PolicyLibraryViewContent: React.FC = () => {
   const { currentTenant, setIsStackSurveyModalOpen, canEdit, activeFramework, activeProgram } = useTenant();
@@ -201,6 +222,12 @@ const PolicyLibraryViewContent: React.FC = () => {
     }
     if (norm === 'CMMC_L2' || norm === 'CMMC-L2') {
       return NIST_800_53_FAMILIES.filter((f) => CMMC_L2_FAMILIES.includes(f.code));
+    }
+    if (norm === 'NIST_800_171_R3') {
+      return NIST_171_R3_FAMILIES.flatMap((r3) => {
+        const base = NIST_800_53_FAMILIES.find((f) => f.code === r3.letter);
+        return base ? [{ ...base, code: r3.code, name: r3.title }] : [];
+      });
     }
     return NIST_800_53_FAMILIES;
   }, [activeFramework]);
@@ -342,6 +369,8 @@ const PolicyLibraryViewContent: React.FC = () => {
                       ? 'DoD CMMC 2.0 Level 1 / FAR 52.204-21'
                       : activeFramework === 'CMMC_L2'
                       ? 'DoD CMMC 2.0 Level 2 / NIST SP 800-171'
+                      : activeFramework === 'NIST_800_171_R3'
+                      ? 'NIST SP 800-171 Rev. 3'
                       : 'NIST SP 800-53 Rev. 5 (Federal RMF)'}
                   </strong>{' '}
                   and your active defense enclave architecture.
@@ -495,7 +524,7 @@ const PolicyLibraryViewContent: React.FC = () => {
                   }`}
                 >
                   <span
-                    className={`w-8 h-8 rounded-xl font-mono font-bold text-xs flex items-center justify-center shrink-0 border ${
+                    className={`w-8 h-8 rounded-xl font-mono font-bold ${fam.code.length > 2 ? 'text-[10px]' : 'text-xs'} flex items-center justify-center shrink-0 border ${
                       isSelected
                         ? 'bg-cyan-500 text-white border-cyan-400'
                         : 'bg-slate-900 text-cyan-400 border-slate-800'
@@ -539,6 +568,8 @@ const PolicyLibraryViewContent: React.FC = () => {
                     ? 'DoD CMMC 2.0 Level 1 / FAR 52.204-21'
                     : activeFramework === 'CMMC_L2'
                     ? 'DoD CMMC 2.0 Level 2 / NIST SP 800-171 Rev. 2'
+                    : activeFramework === 'NIST_800_171_R3'
+                    ? 'NIST SP 800-171 Rev. 3'
                     : 'NIST SP 800-53 Rev. 5 Risk Management Framework'}
                 </strong>
               </p>
@@ -619,7 +650,7 @@ const PolicyLibraryViewContent: React.FC = () => {
                   </button>
                 </span>
               )}
-              {reg.supported && canEdit && !registered && (
+              {reg.supported && canEdit && !registered && activeFramework !== 'NIST_800_171_R3' && (
                 <button
                   type="button"
                   onClick={() => void handleRegister()}
@@ -646,7 +677,7 @@ const PolicyLibraryViewContent: React.FC = () => {
               </button>
             </div>
           </div>
-          {reg.supported && canEdit && !registered && (
+          {reg.supported && canEdit && !registered && activeFramework !== 'NIST_800_171_R3' && (
             <p id={registerHintId} className="text-[11px] text-slate-400">Adds a draft entry to the Document Register. The text is not stored: it is rendered from the generator until a person uploads the reviewed copy and approves it.</p>
           )}
           {registerMsg && (registerMsg.ok ? <p role="status" className="text-xs text-emerald-300">{registerMsg.text}</p> : <ErrorNotice message={registerMsg.text} />)}

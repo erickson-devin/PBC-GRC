@@ -16,7 +16,8 @@ import { useSspReviews } from '../../hooks/useSspReviews';
 import { useSspInventory } from '../../hooks/useSspInventory';
 import { useDataInventory } from '../../hooks/useDataInventory';
 import { useSspDocuments } from '../../hooks/useSspDocuments';
-import { getFrameworkTitle, getFrameworkGuidanceText } from '../../data/frameworks';
+import { getFrameworkTitle } from '../../data/frameworks';
+import { frameworkGuidance } from '../../data/frameworkGuidance';
 
 import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { NOT_RECORDED, NO_CSP_RECORDED } from '../../data/reports/documentDefaults';
@@ -45,7 +46,7 @@ import {
   sspRoleRows,
 } from '../../data/ssp/sspOutput';
 import {
-  CMMC_L2_NEEDS_CUI_CATEGORY,
+  cuiCategoryRequirement,
   DATA_INVENTORY_HEADERS,
   INVENTORY_NOT_AVAILABLE,
   NO_CUI_CATEGORIES_SELECTED,
@@ -145,7 +146,7 @@ export const SSPBuilder: React.FC = () => {
   // The active program's boundary summary describes the system when the plan's own boundary text is empty
   const boundaryScope = meta.systemBoundaryScope || activeProgram?.boundarySummary || '';
   const frameworkTitle = getFrameworkTitle(activeFramework);
-  const guidance = getFrameworkGuidanceText(activeFramework);
+  const guidance = frameworkGuidance(activeFramework);
   const totalControls = frameworkControls.length || metrics.totalControls || 1;
 
   const archived = Boolean(activeProgram?.archived);
@@ -768,7 +769,7 @@ export const SSPBuilder: React.FC = () => {
                   {inv.snapshot.registryAsOf && <span className="text-slate-500 block mt-0.5">CUI category list (NARA CUI Registry) as of {inv.snapshot.registryAsOf}</span>}
                 </div>
                 {inv.snapshot.categories.length === 0 ? (
-                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">{activeFramework === 'CMMC_L2' ? `${NO_CUI_CATEGORIES_SELECTED} ${CMMC_L2_NEEDS_CUI_CATEGORY}` : NO_CUI_CATEGORIES_SELECTED}</div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-800">{cuiCategoryRequirement(activeFramework) ? `${NO_CUI_CATEGORIES_SELECTED} ${cuiCategoryRequirement(activeFramework)}` : NO_CUI_CATEGORIES_SELECTED}</div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs border border-slate-200">

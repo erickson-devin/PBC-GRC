@@ -114,6 +114,9 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
     ? { name: validation.errors.name, description: validation.errors.description, boundarySummary: validation.errors.boundarySummary }
     : validation.errors;
   const isNist = framework === 'NIST_800_53_REV5';
+  const isRev3 = framework === 'NIST_800_171_R3';
+  // A Rev. 3 program is cloned from another Rev. 3 program only: the Rev. 2 content moves through Copy from Rev. 2
+  const cloneSources = isRev3 ? openPrograms.filter((p) => p.framework === 'NIST_800_171_R3') : openPrograms;
   const isFirst = !isEdit && variant === 'first';
   const needsFramework = !isEdit && !framework;
   // A clone does not copy overlays on the server: choosing a NIST source prefills its overlays here, where they can still be changed
@@ -246,6 +249,7 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                     setScoping({ nonNetworkedOnly: false });
                     if (e.target.value !== 'NIST_800_53_REV5') setBaseline('');
                     if (seed === 'clone') chooseSource(defaultCloneSourceId(openPrograms, activeProgram?.id, e.target.value), e.target.value);
+                    if (e.target.value === 'NIST_800_171_R3' && seed === 'clone' && !openPrograms.some((p) => p.framework === 'NIST_800_171_R3')) setSeed('blank');
                   }}
                   disabled={isSaving}
                   className={inputClass}
@@ -396,13 +400,13 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                   type="radio"
                   name={`${uid}-seed`}
                   checked={seed === 'clone'}
-                  disabled={openPrograms.length === 0}
+                  disabled={cloneSources.length === 0}
                   onChange={() => {
                     setSeed('clone');
                     if (!sourceProgramId && openPrograms.length > 0) chooseSource(defaultCloneSourceId(openPrograms, activeProgram?.id, framework));
                   }}
                 />
-                <span>Clone from an existing program (copies notes and responsible roles, not evidence, imports or POA&M items)</span>
+                <span>{isRev3 ? 'Clone from another Rev. 3 program (copies notes and responsible roles, not evidence, imports or POA&M items)' : 'Clone from an existing program (copies notes and responsible roles, not evidence, imports or POA&M items)'}</span>
               </label>
               {seed === 'clone' && (
                 <div>
@@ -415,13 +419,19 @@ export const ProgramFormModal: React.FC<ProgramFormModalProps> = ({ mode, progra
                     {...errorProps('seed')}
                   >
                     <option value="">Choose a program</option>
-                    {openPrograms.map((p) => (
+                    {cloneSources.map((p) => (
                       <option key={p.id} value={p.id}>{p.name} ({frameworkLabel(p.framework)})</option>
                     ))}
                   </select>
                 </div>
               )}
               {fieldError('seed')}
+              {isRev3 && (
+                <p className="text-xs text-slate-300 flex items-start gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>Moving from Rev. 2? Use Copy from Rev. 2 after creating: on this program&apos;s control matrix it appends notes, objective narratives, evidence and tool and document links from a CMMC Level 2 or Level 1 program to the matching Rev. 3 requirements, for you to review.</span>
+                </p>
+              )}
             </fieldset>
           )}
 

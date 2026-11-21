@@ -19,6 +19,7 @@ import {
   Check,
   ListChecks,
   UserCheck,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { ControlStatus } from '../../types/cmmc';
 import { useAssessment } from '../../context/AssessmentContext';
@@ -30,7 +31,7 @@ import { menuLockReason, overlayBannerText, overlayRemovals } from '../../data/o
 import { programFrameworkControls } from '../../data/programScope';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import type { OverlayFilters } from '../../types/framework';
-import { ControlCard, CONFIG_SUGGESTION_CLASS } from './ControlCard';
+import { ControlCard, CONFIG_SUGGESTION_CLASS, REV2_SUGGESTION_CLASS } from './ControlCard';
 import { FailedMoveControlsNotice } from './FailedMoveControlsNotice';
 import { CatalogUpdateNotice } from './CatalogUpdateNotice';
 import { CatalogUpdateList } from './CatalogUpdateList';
@@ -38,6 +39,9 @@ import { BulkAssignDialog } from '../assignments/BulkAssignDialog';
 import { MetMismatchNotice } from './MetMismatchNotice';
 import { useCatalogUpdateChanges } from '../../hooks/useCatalogUpdateChanges';
 import { useConfigSuggestions } from '../../hooks/useConfigSuggestions';
+import { useRev3Suggestions } from '../../hooks/useFrameworkCopy';
+import { chipSuggestion, suggestionIndex as rev2SuggestionIndex, chipText } from '../../data/frameworkCopy/copyView';
+import { CopyFromRev2Entry } from '../frameworkCopy/CopyFromRev2Entry';
 import { cardSuggestionFor, cardSuggestionIndex, cardSuggestionText } from '../../data/telemetry/configResultsView';
 import { catalogUpdateNoticeCopy, catalogUpdateNoticeMode } from '../../data/cmmcGuide/catalogUpdateReview';
 import { refusedMetControls } from '../../data/cmmcGuide/controlStatusGuard';
@@ -129,6 +133,12 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
     () => cardSuggestionIndex(configSuggestions.load.status === 'ready' ? configSuggestions.load.data : null, frameworkIds),
     [configSuggestions.load, frameworkIds]
   );
+  // What the Rev. 2 program suggests for a Rev. 3 program (#255): the same, a chip only
+  const rev2Suggestions = useRev3Suggestions(activeFramework === 'NIST_800_171_R3');
+  const rev2Index = useMemo(
+    () => rev2SuggestionIndex(rev2Suggestions.load.status === 'ready' ? rev2Suggestions.load.data : null, frameworkIds),
+    [rev2Suggestions.load, frameworkIds]
+  );
   const [metMismatchFilter, setMetMismatchFilter] = useState<Set<string> | null>(null); // a snapshot, like the catalog filter
   const toggleMetMismatchFilter = () => setMetMismatchFilter((f) => (f ? null : new Set(metMismatches.map((m) => m.controlId))));
 
@@ -186,7 +196,9 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       }
 
       // Baseline impact filter (per NIST SP 800-53B guidelines)
-      if (selectedBaselineFilter !== 'ALL' && ctrl.baselines) {
+      if (activeFramework === 'NIST_800_171_R3') {
+        // Rev. 3 requirements carry no baseline: the filter is not offered (a choice made on another framework must not hide them)
+      } else if (selectedBaselineFilter !== 'ALL' && ctrl.baselines) {
         // SP 800-53B baseline membership, exactly (SP 800-53 controls carry it)
         if (!ctrl.baselines[selectedBaselineFilter.toLowerCase() as 'low' | 'moderate' | 'high' | 'privacy']) return false;
       } else if (selectedBaselineFilter !== 'ALL') {
@@ -255,6 +267,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
         return '110 Requirements • Controlled Unclassified Information (CUI) • DoD SPRS Assessment';
       case 'NIST_800_53_REV5':
         return `NIST SP 800-53 Baseline: ${activeBaselineTier}${activeProgram?.privacyBaseline ? ' + Privacy' : ''} • FedRAMP / FISMA Authorization`;
+      case 'NIST_800_171_R3':
+        return `NIST SP 800-171 Rev. 3 • ${frameworkControls.length} Requirements • Controlled Unclassified Information (CUI) • Completion tracking (no SPRS score)`;
       case 'SOC_2_TYPE_II':
         return 'AICPA Trust Services Criteria (Security, Availability, Confidentiality) • Type II Attestation';
       case 'HIPAA_SECURITY':
@@ -345,6 +359,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
           </div>
         </div>
       </div>
+
+      {activeFramework === 'NIST_800_171_R3' && <CopyFromRev2Entry onCopied={() => void rev2Suggestions.reload()} />}
 
       {/* Operational overlays of the program (NIST SP 800-53): what they remove; changed from the header's Overlays menu */}
       {removals.overlays.length > 0 && (
@@ -543,7 +559,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             })}
           </div>
 
-          {/* Baseline Filter Dropdown */}
+          {/* Baseline Filter Dropdown (Rev. 3 requirements carry no baselines) */}
+          {activeFramework !== 'NIST_800_171_R3' && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
               <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" /> Baseline:
@@ -560,6 +577,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
               {activeFramework === 'NIST_800_53_REV5' && <option value="PRIVACY">Privacy Baseline</option>}
             </select>
           </div>
+          )}
 
           {/* SP 800-53: base controls and control enhancements */}
           {activeFramework === 'NIST_800_53_REV5' && (
@@ -677,6 +695,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 onOpenDetailModal={() => handleControlClick(ctrl.id)}
                 metMismatch={mismatchById.get(ctrl.id) ?? null}
                 configSuggestion={cardSuggestionFor(suggestionIndex, ctrl.id, state.controls[ctrl.id]?.status ?? 'NOT_STARTED', notesEditable)}
+                rev2Suggestion={chipSuggestion(rev2Index, ctrl.id, state.controls[ctrl.id]?.status ?? 'NOT_STARTED', notesEditable)}
               />
             );
           })}
@@ -713,6 +732,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 const hasNotes = hasSspStatement(ctrl.id, ctrlState?.implementationNotes, state.objectives, activeFramework);
                 const mismatch = mismatchById.get(ctrl.id);
                 const tableSuggestion = cardSuggestionFor(suggestionIndex, ctrl.id, status, notesEditable);
+                const tableRev2Suggestion = chipSuggestion(rev2Index, ctrl.id, status, notesEditable);
                 const authorityRef = ctrl.authorityReference || ctrl.farReference || 'Baseline';
                 const mappings = ctrl.mappings || [];
 
@@ -786,6 +806,12 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                         <span className={`mt-1 flex w-fit items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold border ${CONFIG_SUGGESTION_CLASS[tableSuggestion]}`}>
                           <ListChecks className="w-3 h-3 shrink-0" aria-hidden="true" />
                           <span>{cardSuggestionText(tableSuggestion)}</span>
+                        </span>
+                      )}
+                      {tableRev2Suggestion && (
+                        <span className={`mt-1 flex w-fit items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold border ${REV2_SUGGESTION_CLASS[tableRev2Suggestion]}`}>
+                          <ArrowLeftRight className="w-3 h-3 shrink-0" aria-hidden="true" />
+                          <span>{chipText(tableRev2Suggestion)}</span>
                         </span>
                       )}
                     </td>

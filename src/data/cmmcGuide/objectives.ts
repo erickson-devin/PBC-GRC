@@ -15,6 +15,7 @@ import {
 } from '../frameworks/assessmentObjectives';
 import type { ObjectiveDefinitionTemplate } from '../frameworks/assessmentObjectives';
 import { findControlDefinition, getFrameworkControls } from '../frameworks/frameworkRegistry';
+import { nist171r3ObjectiveTemplate } from '../frameworks/nist171r3/objectives';
 import type { FrameworkControlDefinition } from '../../types/framework';
 import { cmmcNumberOf, guideObjectives } from './guide';
 import { cmmcObjectiveParameterIds } from './parameters';
@@ -109,6 +110,8 @@ export function cmmcCascadeLetters(controlId: string, framework: string): string
  * Every other framework's objective keeps its behaviour: true.
  */
 export function hasWrittenTemplate(controlId: string, letter: string, framework: string): boolean {
+  // NIST SP 800-171 Rev. 3: the determination statements come from NIST with no starter wording, so there is nothing to adopt
+  if (nist171r3ObjectiveTemplate(controlId)) return false;
   if (!cmmcNumberOf(controlId)) return true;
   const carried = cmmcCarryOver(controlId, framework)[letter];
   return Boolean(carried && (carried.def.prefilledTemplate || '').trim());
@@ -116,7 +119,7 @@ export function hasWrittenTemplate(controlId: string, letter: string, framework:
 
 /**
  * The objectives of a control. A CMMC control ('AC.L2-3.1.1', 'AC.L1-3.1.1') gets one objective per letter of the guide;
- * any other control gets the frozen resolver's answer, unchanged. A stored record supplies the status, narrative and evidence;
+ * a NIST SP 800-171 Rev. 3 requirement ('03.01.01') gets one objective per NIST SP 800-171A Rev. 3 determination statement; any other control gets the frozen resolver's answer, unchanged. A stored record supplies the status, narrative and evidence;
  * its text and every hand-written extra are replaced, so a stale cached extra cannot survive.
  */
 export function getControlObjectives(
@@ -126,6 +129,27 @@ export function getControlObjectives(
   customStore?: Record<string, AssessmentObjective>,
   framework: string = 'CMMC_L2'
 ): AssessmentObjective[] {
+  // Rev. 3 ids match no CMMC pattern: they never reach the CMMC branch (which would synthesise Entra / Intune text) or the generic fallback of the frozen resolver
+  const r3 = nist171r3ObjectiveTemplate(controlId);
+  if (r3) {
+    return r3.objectives.map((objDef) => {
+      const objId = `${controlId}[${objDef.letter}]`;
+      const existing = customStore?.[objId];
+      if (existing) return { ...existing, text: objDef.text, prefilledTemplate: '' };
+      return {
+        id: objId,
+        controlId,
+        letter: objDef.letter,
+        text: objDef.text,
+        status: 'NOT_STARTED' as ObjectiveStatus,
+        prefilledTemplate: '',
+        implementationNarrative: '',
+        linkedEvidenceIds: [],
+        isAutoVerifiedByTelemetry: false,
+      };
+    });
+  }
+
   const number = cmmcNumberOf(controlId);
   if (!number) return getAssessmentObjectivesForControl(controlId, controlTitle, existingObjectives, customStore);
 

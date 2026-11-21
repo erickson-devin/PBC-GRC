@@ -6,7 +6,8 @@ export type ComplianceFramework =
   | 'NIST_800_53_REV5'
   | 'nist-800-53-r5'
   | 'SOC_2_TYPE_II'
-  | 'HIPAA_SECURITY';
+  | 'HIPAA_SECURITY'
+  | 'NIST_800_171_R3';
 
 export type ControlKind = 'BASE' | 'ENHANCEMENT';
 
@@ -82,6 +83,8 @@ export interface ControlParameter {
   end?: number;
   /** A baseline value suggested by the catalog (OBJECTIVE ODPs). */
   defaultValue?: string;
+  /** Where defaultValue comes from when it is not the catalog's baseline: the verified DoD ODP table (NIST SP 800-171 Rev. 3). */
+  defaultSource?: 'DOD_ODP';
   /** CMMC: the guide objective letter this parameter belongs to. */
   objectiveLetter?: string;
 }

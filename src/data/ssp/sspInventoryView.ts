@@ -10,6 +10,7 @@ import { groupCategories, type CuiCategory, type CuiRegistry } from '../cui/cuiR
 import { DEPLOYMENT_LABELS } from '../inventory/inventoryUiView';
 import {
   CMMC_L2_NEEDS_CUI_CATEGORY,
+  R3_NEEDS_CUI_CATEGORY,
   INVENTORY_NOT_AVAILABLE,
   NO_TOOLS_RECORDED,
   type SspInventorySnapshot,
@@ -26,6 +27,7 @@ export const SSP_INVENTORY_TEXT = {
   fciQuestion: 'Does this system process, store or transmit Federal Contract Information (FCI)?',
   l1FciNo: 'A CMMC Level 1 program exists to protect FCI: check this answer.',
   l2Required: CMMC_L2_NEEDS_CUI_CATEGORY,
+  r3Required: R3_NEEDS_CUI_CATEGORY,
   l1CuiSelected: 'CUI is selected, so CMMC Level 2 applies to this system, not Level 1.',
   cuiOptional: 'Optional for this framework.',
   noTools: 'No tool assigned yet: tick where this information is stored, processed or transmitted.',
@@ -157,6 +159,7 @@ export function bannerText(c: CuiCategory): string | null {
 
 export function cuiRequirementLine(framework: string, count: number): { tone: 'rose' | 'amber' | 'slate'; text: string } | null {
   if (framework === 'CMMC_L2') return count === 0 ? { tone: 'rose', text: SSP_INVENTORY_TEXT.l2Required } : null;
+  if (framework === 'NIST_800_171_R3') return count === 0 ? { tone: 'rose', text: SSP_INVENTORY_TEXT.r3Required } : null;
   if (framework === 'CMMC_L1') return count > 0 ? { tone: 'amber', text: SSP_INVENTORY_TEXT.l1CuiSelected } : null;
   return { tone: 'slate', text: SSP_INVENTORY_TEXT.cuiOptional };
 }

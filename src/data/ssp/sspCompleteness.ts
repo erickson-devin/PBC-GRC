@@ -69,11 +69,11 @@ export interface SspCompletenessInput {
 /** Not a string, or whitespace only. */
 export const isBlank = (v: unknown): boolean => typeof v !== 'string' || v.trim() === '';
 
-/** cmmc2: CMMC Level 2 (CUI); strict: CMMC Level 1 and NIST SP 800-53; light: SOC 2, HIPAA and anything else. */
+/** cmmc2: CMMC Level 2 and NIST SP 800-171 Rev. 3 (CUI); strict: CMMC Level 1 and NIST SP 800-53; light: SOC 2, HIPAA and anything else. */
 type FrameworkClass = 'cmmc2' | 'strict' | 'light';
 
 function classOf(framework: string): FrameworkClass {
-  if (framework === 'CMMC_L2') return 'cmmc2';
+  if (framework === 'CMMC_L2' || framework === 'NIST_800_171_R3') return 'cmmc2';
   if (framework === 'CMMC_L1' || framework === 'NIST_800_53_REV5' || framework === 'nist-800-53-r5') return 'strict';
   return 'light';
 }

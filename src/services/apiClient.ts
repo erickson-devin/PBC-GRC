@@ -3,6 +3,7 @@ import type { SspMetadataFields, SspMetadataRecord } from '../types/sspMetadata'
 import type { ControlPoamEvent, ControlPoamPatch, ControlPoamRecord } from '../types/controlPoam';
 import type { SspProfile, SspProfileRecord, SspReviewsResponse, SspSectionReview, SspSectionReviewState } from '../types/sspProfile';
 import type { CatalogUpdateChanges, LoweredControl, ObjectiveEvent, ObjectiveImportResult, ObjectiveInput, ObjectiveRecord } from '../types/controlObjectives';
+import type { FrameworkCopyCommitBody, FrameworkCopyCommitResult, FrameworkCopyPreview, FrameworkCopyPreviewBody, FrameworkCopyRun, FrameworkCopySuggestions } from '../types/frameworkCopy';
 import { ComplianceFramework, BaselineTier, OverlayParameter, ControlMapping, FrameworkSummary } from '../types/framework';
 
 const SESSION_REF_KEY = 'pbc_session_ref_v3';
@@ -858,6 +859,34 @@ export const ApiClient = {
     const data = await authedJson<{ items?: unknown }>('GET', '/assignments/mine', { tenantId, programId });
     if (!Array.isArray(data?.items)) throw new ApiError(502, 'The server returned an unexpected response.');
     return data.items as ResponsibilityItem[];
+  },
+
+  /** POST /api/v1/framework-copy/preview (write roles): what copying a CMMC program into this Rev. 3 program would append. Writes nothing; ids, counts and lengths only. */
+  async previewFrameworkCopy(tenantId: string, body: FrameworkCopyPreviewBody, programId?: string | null): Promise<FrameworkCopyPreview> {
+    const data = await authedJson<Partial<FrameworkCopyPreview>>('POST', '/framework-copy/preview', { tenantId, programId, body });
+    if (!Array.isArray(data?.items) || typeof data.planDigest !== 'string') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data as FrameworkCopyPreview;
+  },
+
+  /** POST /api/v1/framework-copy/commit (write roles): applies the previewed plan; 409 copy_plan_stale when the rows changed since the preview. */
+  async commitFrameworkCopy(tenantId: string, body: FrameworkCopyCommitBody, programId?: string | null): Promise<FrameworkCopyCommitResult> {
+    const data = await authedJson<Partial<FrameworkCopyCommitResult>>('POST', '/framework-copy/commit', { tenantId, programId, body });
+    if (typeof data?.runId !== 'string' || !data.summary || typeof data.summary !== 'object') throw new ApiError(502, 'The server returned an unexpected response.');
+    return data as FrameworkCopyCommitResult;
+  },
+
+  /** GET /api/v1/framework-copy/runs (any member): the copy runs of this program, newest first (counts only). */
+  async getFrameworkCopyRuns(tenantId: string, programId?: string | null): Promise<FrameworkCopyRun[]> {
+    const data = await authedJson<{ runs?: unknown }>('GET', '/framework-copy/runs', { tenantId, programId });
+    if (!Array.isArray(data?.runs)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return data.runs as FrameworkCopyRun[];
+  },
+
+  /** GET /api/v1/framework-copy/suggestions (any member): a suggested status per Rev. 3 control from its Rev. 2 sources. Never stored. */
+  async getFrameworkCopySuggestions(tenantId: string, programId?: string | null): Promise<FrameworkCopySuggestions> {
+    const data = await authedJson<Partial<FrameworkCopySuggestions>>('GET', '/framework-copy/suggestions', { tenantId, programId });
+    if (typeof data?.applies !== 'boolean' || !Array.isArray(data.suggestions)) throw new ApiError(502, 'The server returned an unexpected response.');
+    return { applies: data.applies, sourceProgramId: typeof data.sourceProgramId === 'string' ? data.sourceProgramId : null, suggestions: data.suggestions };
   },
 
   /** GET /api/v1/tenants/:id/teams (any member). */

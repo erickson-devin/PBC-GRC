@@ -18,6 +18,7 @@ export function refreshSystemName(current: string, previousOrg: string, nextOrg:
 export function boundaryInformationPhrase(framework: ComplianceFramework): string {
   switch (framework) {
     case 'CMMC_L2':
+    case 'NIST_800_171_R3':
       return 'Controlled Unclassified Information (CUI)';
     case 'NIST_800_53_REV5':
     case 'nist-800-53-r5':
@@ -35,7 +36,7 @@ export function defaultBoundaryNarrative(org: string, framework: ComplianceFrame
   return `The boundary for ${org.trim() || 'our organization'} encompasses the identity management, endpoints, servers and internal network infrastructure used to process, store, or transmit ${boundaryInformationPhrase(framework)}.`;
 }
 
-const NARRATIVE_FRAMEWORKS: ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+const NARRATIVE_FRAMEWORKS: ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'];
 
 /** Follows a change of the organization name when the narrative is still the proposed one (of any framework); typed text is kept. */
 export function refreshBoundaryNarrative(current: string, previousOrg: string, nextOrg: string, framework: ComplianceFramework = 'CMMC_L1'): string {

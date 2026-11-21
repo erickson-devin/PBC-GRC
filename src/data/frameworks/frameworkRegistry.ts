@@ -12,6 +12,7 @@ import { CMMC_LEVEL_2_CONTROLS, CMMC_L2_DOMAINS } from './cmmcLevel2Controls';
 import { NIST_800_53_CONTROLS, NIST_800_53_DOMAINS } from './nist80053Controls';
 import { SOC_2_CONTROLS, SOC_2_DOMAINS } from './soc2Controls';
 import { HIPAA_CONTROLS, HIPAA_DOMAINS } from './hipaaControls';
+import { NIST_171_R3_CONTROLS, NIST_171_R3_DEF } from './nist171r3/controls';
 import {
   getCrossFrameworkMappings,
   isEquivalentMapping,
@@ -139,6 +140,7 @@ export const FRAMEWORK_REGISTRY: Record<string, FrameworkDefinition> = {
     supportsNonNetworkedOverlay: true,
     domains: HIPAA_DOMAINS,
   },
+  NIST_800_171_R3: NIST_171_R3_DEF,
 };
 
 /**
@@ -201,6 +203,9 @@ export function getFrameworkControls(
       break;
     case 'HIPAA_SECURITY':
       controls = [...HIPAA_CONTROLS];
+      break;
+    case 'NIST_800_171_R3':
+      controls = [...NIST_171_R3_CONTROLS];
       break;
     default:
       controls = [...CMMC_L1_FRAMEWORK_CONTROLS];
@@ -265,7 +270,7 @@ export function findControlDefinition(controlId: string): FrameworkControlDefini
   if (!controlId) return undefined;
   if (!definitionIndex) {
     definitionIndex = new Map();
-    for (const c of [...CMMC_L1_FRAMEWORK_CONTROLS, ...CMMC_LEVEL_2_CONTROLS, ...NIST_800_53_CONTROLS, ...SOC_2_CONTROLS, ...HIPAA_CONTROLS]) {
+    for (const c of [...CMMC_L1_FRAMEWORK_CONTROLS, ...CMMC_LEVEL_2_CONTROLS, ...NIST_800_53_CONTROLS, ...SOC_2_CONTROLS, ...HIPAA_CONTROLS, ...NIST_171_R3_CONTROLS]) {
       const key = c.id.toUpperCase();
       if (!definitionIndex.has(key)) definitionIndex.set(key, c); // the first framework that defines an id wins, as before
     }

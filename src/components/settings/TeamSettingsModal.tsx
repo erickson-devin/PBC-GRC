@@ -24,6 +24,7 @@ import { TeamsSection } from './TeamsSection';
 import { useAuth } from '../../context/AuthContext';
 import { TenantRole, type TeamMember } from '../../types/tenant';
 import { ComplianceFramework } from '../../types/framework';
+import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
 import { InviteStaffModal } from './InviteStaffModal';
 import { ErrorNotice } from '../common/ErrorNotice';
 import { LegacyTenantNotice } from '../common/LegacyTenantNotice';
@@ -105,6 +106,7 @@ interface TeamSettingsModalProps {
 const ALL_FRAMEWORKS: { id: ComplianceFramework; label: string; shortName: string; authority: string; count: number }[] = [
   { id: 'CMMC_L1', label: 'CMMC 2.0 Level 1 (Foundational)', shortName: 'CMMC Level 1', authority: 'FAR 52.204-21', count: 17 },
   { id: 'CMMC_L2', label: 'CMMC 2.0 Level 2 (Advanced)', shortName: 'CMMC Level 2', authority: 'DFARS 252.204-7012', count: 110 },
+  { id: 'NIST_800_171_R3', label: 'NIST SP 800-171 Rev. 3', shortName: 'NIST SP 800-171 Rev. 3', authority: 'CUI security requirements', count: FRAMEWORK_REGISTRY.NIST_800_171_R3.totalControls },
   { id: 'NIST_800_53_REV5', label: 'NIST SP 800-53 Rev 5', shortName: 'NIST SP 800-53', authority: 'Federal Baselines (Low/Mod)', count: 220 },
   { id: 'SOC_2_TYPE_II', label: 'AICPA SOC 2 Type II', shortName: 'SOC 2 Type II', authority: 'Trust Services Criteria (CC1–CC9)', count: 61 },
   { id: 'HIPAA_SECURITY', label: 'HIPAA Security Rule', shortName: 'HIPAA Security', authority: '45 CFR Part 164 Subpart C', count: 42 },

@@ -10,7 +10,7 @@ import type { ComplianceFramework } from '../../src/types/framework';
  *
  * A tenant with no tenant record (development fallback / unknown id) has no policy to enforce and is left alone.
  */
-const INDEXED_FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+const INDEXED_FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'];
 
 let controlIndex: Map<string, Set<string>> | null = null;
 

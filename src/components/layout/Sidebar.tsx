@@ -24,7 +24,8 @@ import {
 } from 'lucide-react';
 import { useAssessment, NavigationTab } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { frameworkGuidance } from '../../data/frameworkGuidance';
 import { BrandLogo } from '../common/BrandLogo';
 import { BuildStamp } from '../common/BuildStamp';
 import { canRoleReviewSspImports } from '../../utils/roles';
@@ -90,7 +91,7 @@ export const Sidebar: React.FC = () => {
   } = useTenant();
 
   const totalControls = frameworkControls.length || metrics.totalControls || 17;
-  const guidance = getFrameworkGuidanceText(activeFramework);
+  const guidance = frameworkGuidance(activeFramework);
 
   // ── Dynamic data bindings ───────────────────────────────────────────────
   const frameworkDef = FRAMEWORK_REGISTRY[activeFramework];

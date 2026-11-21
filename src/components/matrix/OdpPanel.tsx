@@ -7,6 +7,8 @@ import { AI_BUTTON_CHECKING_TITLE, aiAvailability, aiErrorForUser, aiNoticeCopy 
 import { findVagueWording, isParameterOpen, parameterValue, parseParameterTags, replaceSentence, replaceTag, resolveParameters, setParameterValue } from '../../data/frameworks/parameters';
 import { cmmcNumberOf } from '../../data/cmmcGuide/guide';
 import { cmmcGuideParameters } from '../../data/cmmcGuide/parameters';
+import { odpDefaultButtonLabel, odpDefaultProvenance } from '../../data/odpDefaultView';
+import { dodDefaultsMeta } from '../../data/frameworks/nist171r3/odp';
 import type { ControlParameter, FrameworkControlDefinition } from '../../types/framework';
 import type { WordingSuggestionRequest, WordingSuggestions } from '../../types/aiAssist';
 
@@ -30,6 +32,8 @@ interface Props {
   /** Show the "AI is off / unavailable" notice in this panel (default: unless `bare`, whose parent shows it once). */
   aiNotice?: boolean;
 }
+
+const DOD_META = dodDefaultsMeta();
 
 type Suggestion = { state: 'loading' } | { state: 'error'; message: string } | { state: 'done'; result: WordingSuggestions };
 
@@ -155,13 +159,20 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
           {showSuggest && (p.source !== 'OBJECTIVE' || serverIds.has(p.id)) && suggestButton(key, body)}
         </div>
         {p.kind === 'SELECTION' && p.choices?.length ? (
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label={`${p.label} choices`}>
-            {p.choices.map((c) => (
-              <button key={c} type="button" disabled={!canEdit || /\[\s*(assignment|selection)/i.test(c)} onClick={() => setValue(p, c)} className="px-2 py-1 rounded-md bg-slate-800 border border-slate-600 text-xs text-slate-100 hover:border-cyan-400 disabled:opacity-50">
-                {c}
+          <>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label={`${p.label} choices`}>
+              {p.choices.map((c) => (
+                <button key={c} type="button" disabled={!canEdit || /\[\s*(assignment|selection)/i.test(c)} onClick={() => setValue(p, c)} className="px-2 py-1 rounded-md bg-slate-800 border border-slate-600 text-xs text-slate-100 hover:border-cyan-400 disabled:opacity-50">
+                  {c}
+                </button>
+              ))}
+            </div>
+            {p.defaultSource === 'DOD_ODP' && p.defaultValue && open && canEdit && (
+              <button type="button" title={p.defaultValue} onClick={() => setValue(p, p.defaultValue!)} className="px-2 py-1.5 rounded-lg border border-slate-600 text-xs text-slate-200 hover:border-cyan-400">
+                {odpDefaultButtonLabel(p)}
               </button>
-            ))}
-          </div>
+            )}
+          </>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -177,12 +188,13 @@ export const OdpPanel: React.FC<Props> = ({ control, notes, canEdit, tenantId, o
               Set
             </button>
             {p.defaultValue && open && canEdit && (
-              <button type="button" onClick={() => setValue(p, p.defaultValue!)} className="px-2 py-1.5 rounded-lg border border-slate-600 text-xs text-slate-200 hover:border-cyan-400">
-                Use baseline ({p.defaultValue})
+              <button type="button" title={p.defaultSource === 'DOD_ODP' ? p.defaultValue : undefined} onClick={() => setValue(p, p.defaultValue!)} className="px-2 py-1.5 rounded-lg border border-slate-600 text-xs text-slate-200 hover:border-cyan-400">
+                {odpDefaultButtonLabel(p)}
               </button>
             )}
           </div>
         )}
+        {(() => { const t = odpDefaultProvenance(p, DOD_META); return t ? <p className="text-[11px] text-slate-400">{t}</p> : null; })()}
         {suggestionList(key, (text) => { setValue(p, text); setDrafts((d) => ({ ...d, [p.id]: text })); }, p.source === 'NOTES' ? 'Fill in tag' : 'Use value')}
       </li>
     );

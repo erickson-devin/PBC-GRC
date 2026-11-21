@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { useAssessment } from '../../context/AssessmentContext';
 import { useTenant } from '../../context/TenantContext';
-import { getFrameworkTitle, getFrameworkGuidanceText, FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { getFrameworkTitle, FRAMEWORK_REGISTRY } from '../../data/frameworks';
+import { frameworkGuidance } from '../../data/frameworkGuidance';
 import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsCompiler';
 import { remediationPriorities } from '../../data/reports/remediationPriority';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
@@ -47,7 +48,7 @@ export const ComplianceOverview: React.FC = () => {
   const catalogUpdate = useCatalogUpdateChanges();
 
   const frameworkTitle = getFrameworkTitle(activeFramework);
-  const guidance = getFrameworkGuidanceText(activeFramework);
+  const guidance = frameworkGuidance(activeFramework);
   const summary = useProgramSummary();
   const serverBacked = Boolean(currentTenant.serverBacked);
   const totalCount = metrics.totalControls || frameworkControls.length || 1;

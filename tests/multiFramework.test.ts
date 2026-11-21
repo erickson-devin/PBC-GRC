@@ -6,6 +6,7 @@
 import './testEnv';
 import app, { server } from '../server/index';
 import { firstProgram } from './programFixture';
+import { FRAMEWORK_REGISTRY } from '../src/data/frameworks';
 import http from 'http';
 
 const TEST_PORT = 8080;
@@ -109,7 +110,8 @@ async function runMultiFrameworkTests() {
     const fwRes = await makeRequest('/api/v1/controls/frameworks', 'GET', TENANT_A_TOKEN, 'tenant-alpha');
     assert(fwRes.status === 200, 'Frameworks endpoint returns HTTP 200');
     assert(Array.isArray(fwRes.body?.frameworks), 'Returns frameworks array');
-    assert(fwRes.body?.frameworks?.length === 5, 'Supports all 5 frameworks (CMMC L1, L2, NIST 800-53, SOC 2, HIPAA)');
+    const canonicalFrameworkCount = Object.keys(FRAMEWORK_REGISTRY).filter((k) => FRAMEWORK_REGISTRY[k].id === k).length;
+    assert(canonicalFrameworkCount === 6 && fwRes.body?.frameworks?.length === canonicalFrameworkCount, 'Supports all 6 frameworks (CMMC L1, L2, NIST 800-53, SOC 2, HIPAA, NIST 800-171 Rev. 3)');
 
     const cmmcL2Fw = fwRes.body?.frameworks?.find((f: any) => f.id === 'CMMC_L2');
     assert(cmmcL2Fw?.totalControls === 110, 'CMMC Level 2 specifies 110 controls');

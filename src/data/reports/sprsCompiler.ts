@@ -206,7 +206,8 @@ export function emassCsvNotes(framework: string): string[] {
   const notes = ['One row per control of this program: its ID, title, domain, implementation status, narrative, responsible role, evaluation date and verified artifacts.'];
   if (framework === 'CMMC_L1' || framework === 'CMMC_L2') notes[0] += ' For CMMC controls the narrative includes the objective narratives.';
   if (!sprsAppliesTo(framework)) notes.push('The SPRS Weight column reads N/A: SPRS point values exist only for CMMC Level 2.');
-  if (framework !== 'CMMC_L1' && framework !== 'CMMC_L2') notes.push('The NIST SP 800-171 Ref column reads N/A: this framework does not map to NIST SP 800-171 requirements.');
+  if (framework === 'NIST_800_171_R3') notes.push('The NIST SP 800-171 Ref column repeats the Rev. 3 requirement ID.');
+  else if (framework !== 'CMMC_L1' && framework !== 'CMMC_L2') notes.push('The NIST SP 800-171 Ref column reads N/A: this framework does not map to NIST SP 800-171 requirements.');
   return notes;
 }
 
@@ -239,6 +240,8 @@ export function generateEmassControlMatrixCsv(
   let csv = headers.map(h => `"${h}"`).join(',') + '\r\n';
   const sprsApplies = sprsAppliesTo(metadata.framework);
   const mapsTo171 = metadata.framework === 'CMMC_L1' || metadata.framework === 'CMMC_L2';
+  // A Rev. 3 control is itself a NIST SP 800-171 requirement: the column shows its own id.
+  const isRev3 = metadata.framework === 'NIST_800_171_R3';
 
   for (const ctrl of controls) {
     const state = controlStates[ctrl.id];
@@ -265,7 +268,7 @@ export function generateEmassControlMatrixCsv(
       csvCell(systemId ? `${systemId} / ${metadata.systemName || NOT_RECORDED}` : metadata.systemName || NOT_RECORDED),
       csvCell(metadata.cageCode || 'N/A'),
       csvCell(cmmcDisplayId(ctrl.id, metadata.framework)),
-      csvCell(mapsTo171 ? nistId : 'N/A'),
+      csvCell(isRev3 ? ctrl.id : mapsTo171 ? nistId : 'N/A'),
       csvCell(ctrl.title),
       csvCell(ctrl.domain),
       csvCell(emassStatus),

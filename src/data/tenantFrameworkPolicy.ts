@@ -9,7 +9,7 @@ import type { ComplianceFramework } from '../types/framework';
  * assessment workflow they are set up for. Not the assessment program entity (see src/types/program.ts), though
  * PROGRAM_FRAMEWORKS is also the list of frameworks an assessment program may carry.
  */
-export const PROGRAM_FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY'];
+export const PROGRAM_FRAMEWORKS: readonly ComplianceFramework[] = ['CMMC_L1', 'CMMC_L2', 'NIST_800_53_REV5', 'SOC_2_TYPE_II', 'HIPAA_SECURITY', 'NIST_800_171_R3'];
 
 export const DEFAULT_PRIMARY_FRAMEWORK: ComplianceFramework = 'CMMC_L1';
 
