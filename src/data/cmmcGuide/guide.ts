@@ -50,6 +50,24 @@ export function cmmcGuideTitle(controlId: string): string | undefined {
   return n ? L2_BY_NUMBER.get(n)?.displayTitle : undefined;
 }
 
+/** The Level 1 guide's requirement (FAR clause wording) per 800-171 number it covers. */
+const L1_STATEMENT_BY_NUMBER = new Map<string, string>();
+for (const r of CMMC_L1_GUIDE.requirements) {
+  for (const n of r.numbers) if (!L1_STATEMENT_BY_NUMBER.has(n)) L1_STATEMENT_BY_NUMBER.set(n, r.statement);
+}
+
+/**
+ * The requirement as the assessment guide states it (#322): the FAR clause wording for a Level 1 program, the NIST SP 800-171
+ * wording otherwise. Undefined for an id that is not a CMMC requirement. This is the text an SSP prints as "Requirement:";
+ * the catalog's plainEnglishSummary is a paraphrase for on-screen help.
+ */
+export function cmmcRequirementStatement(controlId: string, framework?: string): string | undefined {
+  const n = cmmcNumberOf(controlId);
+  if (!n) return undefined;
+  const l1 = framework === 'CMMC_L1' ? L1_STATEMENT_BY_NUMBER.get(n) : undefined;
+  return (l1 ?? L2_BY_NUMBER.get(n)?.statement) || undefined;
+}
+
 /** A copy of the control with the guide's title; a control that is not a CMMC requirement comes back unchanged. */
 export function withGuideTitle<T extends { id: string; title: string }>(ctrl: T): T {
   const title = cmmcGuideTitle(ctrl.id);

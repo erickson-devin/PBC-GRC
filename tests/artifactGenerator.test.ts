@@ -38,7 +38,7 @@ import { createDefaultSspMetadata, scrubInventedMetadata, buildSspMarkdown, crea
 import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import { getControlObjectives } from '../src/data/cmmcGuide/objectives';
-import { guideObjectives } from '../src/data/cmmcGuide/guide';
+import { CMMC_L2_GUIDE, cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import { composeImplementationStatement } from '../src/data/cmmcGuide/sspStatement';
 import { localDateIso } from '../src/utils/localDate';
 import fs from 'fs';
@@ -237,7 +237,9 @@ async function runArtifactGeneratorTests() {
       assert(p3.weaknessDescription.includes('are recorded as met or not applicable') && p3.weaknessDescription.includes('recorded as Not met'), 'P3 all objectives Met but the requirement is not');
 
       const p4 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), undefined, 'CMMC_L2')[0];
-      assert(p4.weaknessDescription === `Control requirement not met: ${c.plainEnglishSummary || c.title}.` && p4.remediationPlan.includes('Validate objective: "'), 'P4 objectives undefined keeps the old wording');
+      // #322: the requirement is quoted in the assessment guide's wording, not the catalog's summary
+      const p4Statement = CMMC_L2_GUIDE.requirements.find(r => r.number === cmmcNumberOf(c.id))!.statement.replace(/\.\s*$/, '');
+      assert(p4.weaknessDescription === `Control requirement not met: ${p4Statement}.` && p4.remediationPlan.includes('Validate objective: "'), 'P4 objectives undefined: the requirement in the guide\'s wording', p4.weaknessDescription);
 
       const soc2 = getFrameworkControls('SOC_2_TYPE_II');
       const soc2States: Record<string, ControlState> = {};

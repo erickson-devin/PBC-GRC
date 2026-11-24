@@ -23,6 +23,7 @@ import { copyText, COPY_FAILED_MESSAGE } from '../../utils/clipboard';
 import { NOT_RECORDED, NO_CSP_RECORDED, SIGNATURE_BLANK, UNSIGNED_ATTESTATION_NOTE } from '../../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { composeImplementationStatement } from '../../data/cmmcGuide/sspStatement';
+import { sspRequirementLine } from '../../data/ssp/requirementLine';
 import { statusDisplayLabel } from '../../data/statusLabels';
 import { SSP_METADATA_NEED_OWNER_MESSAGE } from '../../data/sspMetadataSync';
 import { computeSspCompleteness, resolveSspCompletenessInput } from '../../data/ssp/sspCompleteness';
@@ -904,9 +905,9 @@ export const SSPBuilder: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Requirement Summary */}
+                    {/* The guide's own requirement text for CMMC; a labelled summary for any other framework (#322) */}
                     <p className="text-[11px] text-slate-600 italic">
-                      Requirement: {ctrl.plainEnglishSummary || ctrl.discussion}
+                      {sspRequirementLine(ctrl, activeFramework).label}: {sspRequirementLine(ctrl, activeFramework).text}
                     </p>
                     </div>
 

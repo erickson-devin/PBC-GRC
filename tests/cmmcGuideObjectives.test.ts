@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import l2Json from '../src/data/cmmcGuide/cmmcL2Guide.generated.json';
 import l1Json from '../src/data/cmmcGuide/cmmcL1Guide.generated.json';
-import { CMMC_L1_GUIDE, CMMC_L2_GUIDE, CMMC_OBJECTIVE_CATALOG_REV, cmmcGuideTitle, cmmcNumberOf, guideObjectives, withGuideTitle } from '../src/data/cmmcGuide/guide';
+import { CMMC_L1_GUIDE, CMMC_L2_GUIDE, CMMC_OBJECTIVE_CATALOG_REV, cmmcGuideTitle, cmmcNumberOf, cmmcRequirementStatement, guideObjectives, withGuideTitle } from '../src/data/cmmcGuide/guide';
+import { sspRequirementLine } from '../src/data/ssp/requirementLine';
 import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, normalizeObjectiveText, starterTemplateVariants } from '../src/data/cmmcGuide/objectives';
 import { controlStatusAfterCatalogUpdate, migrateCachedObjectives, objectiveStatusAfterCatalogUpdate } from '../src/data/cmmcGuide/migration';
 import { checklistLetterOf, uncoveredChecklistLetters, uncoveredChecklistText } from '../src/data/cmmcGuide/importLetters';
@@ -392,6 +393,28 @@ assert(panelSrc.includes('Mark each objective below yourself.'), 'the panel keep
 assert(/checklistLetterOf\(current\.controlId, current\.framework, o\.text\)/.test(viewSrc) && viewSrc.includes('can differ from the control\'s objective checklist (CMMC Assessment Guide)'), 'the review screen matches by wording and explains why the letters can differ');
 assert([panelSrc, viewSrc].every((s) => s.includes('(not worded like a checklist objective)') && s.includes('(checklist [')), 'both screens carry the two per-objective notes');
 assert([panelSrc, viewSrc].every((s) => s.includes('uncoveredChecklistLetters(') && s.includes('uncoveredChecklistText(')), 'both screens show the checklist objectives the import did not compare');
+
+// ── #322: the SSP prints the guide's requirement text, not the catalog's paraphrase ──
+console.log('--- Requirement text (#322) ---');
+{
+  const l2 = getFrameworkControls('CMMC_L2');
+  const lock = CMMC_L2_GUIDE.requirements.find((r) => r.number === '3.1.10')!;
+  assert(cmmcRequirementStatement('AC.L2-3.1.10', 'CMMC_L2') === lock.statement && /session lock/i.test(lock.statement) && !/concurrent/i.test(lock.statement), 'R1: 3.1.10 prints the session lock requirement');
+  assert(l2.every((c) => { const n = cmmcNumberOf(c.id)!; return cmmcRequirementStatement(c.id, 'CMMC_L2') === CMMC_L2_GUIDE.requirements.find((r) => r.number === n)!.statement; }), 'R2: every Level 2 control has the guide statement of its own number');
+  assert(l2.every((c) => { const line = sspRequirementLine(c, 'CMMC_L2'); return line.label === 'Requirement' && line.text.length > 20; }) && l2.length === 110, 'R3: all 110 Level 2 controls print a line labelled Requirement');
+  const l1 = getFrameworkControls('CMMC_L1');
+  const far = CMMC_L1_GUIDE.requirements.find((r) => r.numbers.includes('3.1.1'))!;
+  assert(cmmcRequirementStatement('AC.L1-3.1.1', 'CMMC_L1') === far.statement && cmmcRequirementStatement('AC.L1-3.1.1', 'CMMC_L2') === CMMC_L2_GUIDE.requirements.find((r) => r.number === '3.1.1')!.statement, 'R4: a Level 1 program prints the FAR clause wording, a Level 2 program the 800-171 wording');
+  assert(l1.every((c) => sspRequirementLine(c, 'CMMC_L1').label === 'Requirement') && l1.length > 0, 'R5: every Level 1 control prints a Requirement line');
+  const other = { id: 'AC-2', plainEnglishSummary: 'Manage accounts.', title: 'Account Management' };
+  const line = sspRequirementLine(other, 'NIST_800_53_REV5');
+  assert(cmmcRequirementStatement('AC-2', 'NIST_800_53_REV5') === undefined && line.label === 'Summary' && line.text === 'Manage accounts.', 'R6: any other framework prints its summary, labelled Summary');
+  assert(sspRequirementLine({ id: 'X-1', title: 'Only a title' }, 'SOC_2_TYPE_II').text === 'Only a title', 'R7: with no summary the title is the fallback');
+  const builder = fs.readFileSync(path.join(process.cwd(), 'src/components/ssp/SSPBuilder.tsx'), 'utf8');
+  const storage = fs.readFileSync(path.join(process.cwd(), 'src/services/storageService.ts'), 'utf8');
+  assert(builder.includes('sspRequirementLine(ctrl, activeFramework)') && !builder.includes('Requirement: {ctrl.plainEnglishSummary'), 'R8: the SSP page uses the requirement line');
+  assert(storage.includes('sspRequirementLine(ctrl, framework)') && !storage.includes('${ctrl.domain} - ${ctrl.plainEnglishSummary}'), 'R9: the SSP Markdown uses the requirement line');
+}
 
 console.log(`\n📊 TEST RESULTS: ${passed} / ${total}`);
 if (passed !== total) process.exitCode = 1;

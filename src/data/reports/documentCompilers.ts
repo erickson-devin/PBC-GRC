@@ -16,6 +16,7 @@ import { composeImplementationStatement, objectiveNarrativePrints } from '../cmm
 import { appendRemediationPolicyParagraph } from '../vmRemediation';
 import { statusDisplayLabel } from '../statusLabels';
 import { localDateIso } from '../../utils/localDate';
+import { sspRequirementLine } from '../ssp/requirementLine';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
@@ -207,7 +208,7 @@ export function generatePOAMEntries(
         ? objectiveWeakness.description + (narr ? ` Recorded narratives of the open objectives: ${narr}` : '')
         : notes
           ? notesLine
-          : `Control requirement not met: ${ctrl.plainEnglishSummary || ctrl.title}.`;
+          : `Control requirement not met: ${(sspRequirementLine(ctrl, framework ?? '').text || ctrl.title).replace(/\.\s*$/, '')}.`;
 
       // Remediation action plan
       const primaryObjective = ctrl.assessmentObjectives?.[0] || 'Verify technical and administrative safeguards satisfy baseline.';
