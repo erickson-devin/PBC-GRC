@@ -62,6 +62,11 @@ function legacyEntry(controlId: string): { key: string; objectives: ObjectiveDef
   return undefined;
 }
 
+/** A starter template as a Level 2 program shows it: the information it protects is CUI, not FCI. Other text is unchanged. */
+export function level2TemplateWording(template: string): string {
+  return (template || '').replace(/\bFederal Contract Information\b/g, 'Controlled Unclassified Information').replace(/\bFCI\b/g, 'CUI');
+}
+
 const carryCache = new Map<string, Record<string, CarriedObjective>>();
 
 /** For each guide letter that keeps a hand-written template: where it came from. A letter missing from the map has none. */
@@ -88,6 +93,8 @@ export function cmmcCarryOver(controlId: string, framework: string): Record<stri
             const numberHits = byNumber.objectives.filter((o) => normalizeObjectiveText(o.text) === want);
             if (numberHits.length === 1) def = { ...def, prefilledTemplate: numberHits[0].prefilledTemplate };
           }
+          // A few templates name FCI whichever entry they come from (#324): a Level 2 program reads CUI. The registry text is not edited
+          if (framework === 'CMMC_L2') def = { ...def, prefilledTemplate: level2TemplateWording(def.prefilledTemplate) };
           out[g.letter] = { sourceKey: src.key, sourceLetter: hits[0].letter, def };
           break;
         }

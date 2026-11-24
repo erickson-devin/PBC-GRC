@@ -4,7 +4,7 @@ import l2Json from '../src/data/cmmcGuide/cmmcL2Guide.generated.json';
 import l1Json from '../src/data/cmmcGuide/cmmcL1Guide.generated.json';
 import { CMMC_L1_GUIDE, CMMC_L2_GUIDE, CMMC_OBJECTIVE_CATALOG_REV, cmmcGuideTitle, cmmcNumberOf, cmmcRequirementStatement, guideObjectives, withGuideTitle } from '../src/data/cmmcGuide/guide';
 import { sspRequirementLine } from '../src/data/ssp/requirementLine';
-import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, normalizeObjectiveText, starterTemplateVariants } from '../src/data/cmmcGuide/objectives';
+import { cmmcCarryOver, cmmcCascadeLetters, cmmcCascadeSource, getControlObjectives, legacyObjectives, level2TemplateWording, normalizeObjectiveText, starterTemplateVariants } from '../src/data/cmmcGuide/objectives';
 import { controlStatusAfterCatalogUpdate, migrateCachedObjectives, objectiveStatusAfterCatalogUpdate } from '../src/data/cmmcGuide/migration';
 import { checklistLetterOf, uncoveredChecklistLetters, uncoveredChecklistText } from '../src/data/cmmcGuide/importLetters';
 import { validateGuideData } from '../src/data/cmmcGuide/validate';
@@ -182,7 +182,21 @@ assert(variants311.length === 2 && variants311.includes(t311a.trim()) && variant
 const variants318 = starterTemplateVariants('AC.L2-3.1.8', 'a', 'CMMC_L2');
 assert(variants318.length === 0, 'G14b: starterTemplateVariants of a letter with no hand-written template is empty', variants318);
 const fciLeft = l2Controls.reduce((n, c) => n + getControlObjectives(c.id, undefined, undefined, undefined, 'CMMC_L2').filter((o) => FCI.test(o.prefilledTemplate)).length, 0);
-console.log(`  (Level 2 objectives whose template still matches the FCI pattern: ${fciLeft})`);
+assert(fciLeft === 0, 'G14c: no Level 2 starter template names FCI (#324)', fciLeft);
+// the three templates that name FCI in every registry entry that matches them: shown with CUI, registry text unchanged
+const far3120a = NIST_800_171A_REGISTRY['AC.L1-b.1.iii'].objectives[0].prefilledTemplate;
+const num3135a = NIST_800_171A_REGISTRY['3.13.5'].objectives[0].prefilledTemplate;
+const num3145a = NIST_800_171A_REGISTRY['3.14.5'].objectives[0].prefilledTemplate;
+assert(FCI.test(far3120a) && FCI.test(num3135a) && FCI.test(num3145a), 'G14c: the registry text of the three still names FCI (frozen data is not edited)');
+assert(idx('AC.L1-3.1.20', 'a').prefilledTemplate === far3120a.replace('handling FCI', 'handling CUI'), 'G14c: AC.L1-3.1.20[a] in a Level 2 program says CUI', idx('AC.L1-3.1.20', 'a').prefilledTemplate);
+assert(idx('SC.L1-3.13.5', 'a').prefilledTemplate === num3135a.replace('holding FCI', 'holding CUI'), 'G14c: SC.L1-3.13.5[a] in a Level 2 program says CUI', idx('SC.L1-3.13.5', 'a').prefilledTemplate);
+assert(idx('SI.L1-3.14.5', 'a').prefilledTemplate === num3145a.replace('processing FCI', 'processing CUI'), 'G14c: SI.L1-3.14.5[a] in a Level 2 program says CUI', idx('SI.L1-3.14.5', 'a').prefilledTemplate);
+assert(FCI.test(idx('AC.L1-3.1.20', 'a', 'CMMC_L1').prefilledTemplate) && idx('AC.L1-3.1.20', 'a', 'CMMC_L1').prefilledTemplate === far3120a, 'G14c: the Level 1 template of AC.L1-3.1.20[a] still says FCI');
+// a narrative adopted from the older FCI wording is still recognised as unedited starter text
+assert(starterTemplateVariants('AC.L1-3.1.20', 'a', 'CMMC_L2').includes(far3120a.trim()), 'G14c: the FCI wording of AC.L1-3.1.20[a] is still a known starter text');
+assert(starterTemplateVariants('SC.L1-3.13.5', 'a', 'CMMC_L2').includes(num3135a.trim()), 'G14c: the FCI wording of SC.L1-3.13.5[a] is still a known starter text');
+assert(level2TemplateWording('Protects Federal Contract Information (FCI). FCIX stays.') === 'Protects Controlled Unclassified Information (CUI). FCIX stays.', 'G14c: level2TemplateWording replaces whole words only');
+assert(level2TemplateWording('') === '', 'G14c: level2TemplateWording of an empty template is empty');
 
 // an independent count of the Level 2 objectives that keep a hand-written template
 const norm = (s: string) => s.toLowerCase().replace(/federal contract information/g, 'fci').replace(/controlled unclassified information/g, 'cui').replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|a|an)\b/g, ' ').replace(/\s+/g, ' ').trim();
