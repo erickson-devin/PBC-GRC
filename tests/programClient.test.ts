@@ -91,6 +91,7 @@ assert(m2.documented === null && m2.total === null && m2.openPoam === null && m2
 const m3 = parseProgramMetrics({ documented: -1, total: 'x', evidence: NaN, openPoam: null });
 assert(m3.documented === null && m3.total === null && m3.openPoam === null && m3.evidenceCount === null, 'H9c negative, non-numeric and NaN counts are null', m3);
 assert(parseProgramMetrics(null).total === null, 'H9d a null body does not throw');
+assert(parseProgramMetrics({ controlPoam: 109 }).controlPoam === 109 && parseProgramMetrics({}).controlPoam === null && parseProgramMetrics({ controlPoam: -1 }).controlPoam === null, 'H9e controlPoam parses; missing or negative is null');
 
 console.log('\n--- pickActiveProgramId ---');
 const list = [

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { server } from '../server/index';
 import { readControlAssessments } from '../server/controlAssessments';
+import { countOpenControlEntries } from '../server/programs';
 import { getFrameworkControls } from '../src/data/frameworks';
 import { nistControlsWithPrivacy } from '../src/data/programScope';
 
@@ -156,7 +157,11 @@ async function run() {
   console.log('\n--- 24-27: metrics, clone, listing ---');
   const metrics = await call('GET', `/tenants/${T}/programs/${A}/metrics`, owner, T);
   assert(metrics.status === 200 && metrics.body?.documented === 1 && metrics.body.total === getFrameworkControls('CMMC_L2').length && metrics.body.evidence === 1 && metrics.body.openPoam === 0, '24 metrics of A: 1 documented, the Level 2 total, 1 evidence file (the inherited copies do not count), 0 POA&M', metrics.body);
-  assert((await call('GET', `/tenants/${T}/programs/${C}/metrics`, owner, T)).status === 404 && (await call('GET', `/tenants/${T}/programs/${t2Program}/metrics`, owner, T)).status === 404, '24 metrics of a deleted or another tenant\'s program -> 404');
+  // the card's POA&M control entries are the catalog controls not MET (what the POA&M screen lists), apart from the vulnerability items
+  const metInA = (((await ctl(T, A)).body?.controls ?? []) as Json[]).filter((x) => x.status === 'MET').length;
+  assert(metrics.body?.controlPoam === getFrameworkControls('CMMC_L2').length - metInA && metrics.body?.openPoam === 0, '24b metrics of A: controlPoam is the Level 2 total less the MET controls; openPoam (vulnerability items) stays 0', [metrics.body, metInA]);
+  assert(countOpenControlEntries(['A', 'B', 'C'], (id) => ({ A: 'MET', B: 'NOT_MET' } as Record<string, string>)[id]) === 2 && countOpenControlEntries([], () => 'MET') === 0 && countOpenControlEntries(['A'], () => undefined) === 1, '24c countOpenControlEntries counts every id that is not MET, a missing status included');
+  assert((await call('GET', `/tenants/${T}/programs/${C}/metrics`, owner, T)).status === 404 &&(await call('GET', `/tenants/${T}/programs/${t2Program}/metrics`, owner, T)).status === 404, '24 metrics of a deleted or another tenant\'s program -> 404');
   const clone = await newProgram(T, { name: 'Clone', frameworkId: 'CMMC_L2', seed: { cloneFrom: A } });
   const CLONE = clone.body?.program?.id as string;
   const cloned = await ctrl(T, CLONE);

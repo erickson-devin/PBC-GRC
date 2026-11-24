@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { planConfirmAll, objectiveTemplateSection, confirmAllResultMessage, type ConfirmAllObjective } from '../src/data/confirmAllTemplates';
+import { planConfirmAll, objectiveTemplateSection, confirmAllResultMessage, confirmAllTitle, confirmAllConfirmLabel, confirmAllIntro, type ConfirmAllObjective } from '../src/data/confirmAllTemplates';
+import { notApplicableReasonDraft, notApplicableReasonError } from '../src/data/objectiveNotApplicable';
 import { hasWrittenTemplate, getControlObjectives, cmmcCascadeSource } from '../src/data/cmmcGuide/objectives';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 
@@ -52,6 +53,27 @@ function main() {
   assert(JSON.stringify(p.statusChanged.map((e) => e.letter)) === JSON.stringify(['a', 'b']), 'NOT_MET and NOT_STARTED both move to In progress', p);
   p = planConfirmAll(mk([{ implementationNarrative: 'c', status: 'NOT_MET' }, {}]), 'n');
   assert([...p.narrativesReplaced, ...p.statusChanged].every((e) => Object.keys(e).sort().join() === 'id,letter'), 'list entries have only id and letter');
+
+  p = planConfirmAll(mk(), 'my own notes', undefined, false);
+  assert(p.notes === '' && !p.notesReplaced && !p.needsConfirmation && p.filled.length === 2, 'writesNotes false: the notes are not written, replaced or asked about', p);
+
+  console.log('\n--- dialog texts ---');
+  const two = planConfirmAll(mk(), '');
+  const ask = planConfirmAll(mk(), 'my own notes');
+  assert(confirmAllTitle(two) === 'Fill 2 objectives with starter text?' && confirmAllTitle(ask) === 'Replace with the starter templates?', 'titles', [confirmAllTitle(two), confirmAllTitle(ask)]);
+  assert(confirmAllTitle(planConfirmAll([mk()[0]], '')) === 'Fill 1 objective with starter text?', 'title with one objective');
+  assert(confirmAllConfirmLabel(two) === 'Fill objectives' && confirmAllConfirmLabel(ask) === 'Replace', 'confirm labels');
+  assert(confirmAllIntro(2) === 'This fills 2 objectives with starter text. Starter text is a draft: sample wording that may name products your organization does not use. Edit each one to describe your environment, then mark each one Met.', 'intro (2)', confirmAllIntro(2));
+  assert(confirmAllIntro(1) === 'This fills 1 objective with starter text. Starter text is a draft: sample wording that may name products your organization does not use. Edit it to describe your environment, then mark it Met.', 'intro (1)', confirmAllIntro(1));
+
+  console.log('\n--- Not applicable reason ---');
+  assert(notApplicableReasonDraft({ implementationNarrative: 'T', prefilledTemplate: 'T' }) === '', 'a narrative equal to the template is not a draft reason');
+  assert(notApplicableReasonDraft({ implementationNarrative: 'Mine', prefilledTemplate: 'T' }) === 'Mine', 'the saved narrative seeds the reason');
+  assert(notApplicableReasonDraft({ implementationNarrative: 'Mine', prefilledTemplate: 'T' }, 'Typed') === 'Typed', 'the typed draft wins');
+  assert(notApplicableReasonDraft({ implementationNarrative: 'Old', prefilledTemplate: 'T' }, 'Old starter', ['Old starter']) === '', 'an older starter text is not a draft reason');
+  assert(notApplicableReasonError('  ', ['T']) === 'Write a short reason before marking the objective Not applicable.', 'a blank reason is refused');
+  assert(notApplicableReasonError('T', ['T']) === 'The starter template is not a reason. Write why this objective does not apply.', 'the starter text is refused');
+  assert(notApplicableReasonError('No Wi-Fi', ['T']) === null, 'a written reason is accepted');
 
   console.log('\n--- written templates only (#282) ---');
   const onlyA = (o: ConfirmAllObjective) => o.letter === 'a';
@@ -109,9 +131,19 @@ function main() {
   assert(/import \{[^}]*planConfirmAll[^}]*\} from '..\/..\/data\/confirmAllTemplates'/.test(comp), 'ObjectiveChecklist imports planConfirmAll');
   assert(/import \{[^}]*DialogOverlay[^}]*DialogTitle[^}]*\} from/.test(comp) && comp.includes('role="alertdialog"'), 'ObjectiveChecklist uses DialogOverlay, DialogTitle and an alertdialog');
   const start = comp.indexOf('const handleBulkApplyAll');
-  const body = comp.slice(start, comp.indexOf('const handleNarrativeChange'));
-  assert(start > 0 && body.indexOf('needsConfirmation') >= 0 && body.indexOf('needsConfirmation') < body.indexOf('applyAll(plan)'), 'handleBulkApplyAll checks needsConfirmation before applying');
-  assert(comp.includes("import { hasWrittenTemplate } from '../../data/cmmcGuide/objectives'") && comp.includes("planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '', hasTemplate)"), 'the checklist passes the written-template check to the plan');
+  const body = comp.slice(start, comp.indexOf('const handleConfirmReplace'));
+  assert(start > 0 && body.includes('setPendingPlan(plan)') && !body.includes('applyAll(') && !body.includes('applyAllObjectiveTemplatesForControl'), 'handleBulkApplyAll always asks first: it sets the pending plan and never applies directly');
+  assert(/import \{ hasWrittenTemplate[^}]*\} from '..\/..\/data\/cmmcGuide\/objectives'/.test(comp) && comp.includes("planConfirmAll(objectives, state.controls[controlId]?.implementationNotes ?? '', hasTemplate, !objectiveNarrativesInSsp(controlId, activeFramework))"), 'the checklist passes the written-template check and whether the notes are written to the plan');
+  const statusStart = comp.indexOf('const handleStatusClick');
+  const statusBody = comp.slice(statusStart, comp.indexOf('const handleConfirmNotApplicable'));
+  assert(statusStart > 0 && statusBody.includes("'NOT_APPLICABLE'") && statusBody.indexOf("'NOT_APPLICABLE'") < statusBody.indexOf('updateObjectiveStatus('), 'handleStatusClick opens the reason dialog for Not applicable before it saves anything');
+  assert(comp.includes('notApplicableReasonError(') && comp.includes('Mark Not applicable') && comp.includes('Why does objective ['), 'the checklist asks for a Not applicable reason');
+  const prefilledStart = ctx.indexOf('const applyObjectivePrefilledNarrative');
+  const prefilledCtx = ctx.slice(prefilledStart, ctx.indexOf('const applyAllObjectiveTemplatesForControl'));
+  assert(prefilledStart > 0 && prefilledCtx.includes('objectiveNarrativesInSsp(controlId, activeFramework)'), 'applyObjectivePrefilledNarrative leaves the notes alone where the SSP prints the narratives');
+  const statusCtxStart = ctx.indexOf('const updateObjectiveStatus');
+  const statusCtx = ctx.slice(statusCtxStart, ctx.indexOf('const updateObjectiveNarrative'));
+  assert(statusCtxStart > 0 && statusCtx.includes('checkStale: true'), 'updateObjectiveStatus sends a reason as a stale-checked narrative save');
   assert(['Best-Practice', 'Industry', 'FedRAMP Mod / Azure Gov / STIG', 'Quick-Adopt', 'Baseline Template', 'Confirm All'].every((t) => !comp.includes(t)), 'the checklist claims no best-practice provenance');
   assert(comp.includes('No starter template exists for this objective.') && comp.includes('{objHasTemplate ? (') && /objHasTemplate && !isTemplateOpen && !hasConfirmedNarrative/.test(comp), 'an objective without a template shows a note instead of the template card and the adopt link');
   assert(comp.includes('confirmAllResultMessage(bulkResult.filled, bulkResult.skipped)') && comp.includes('<div role="status" aria-live="polite">'), 'the result of the bulk apply is announced in a live region');

@@ -16,6 +16,7 @@ import {
 import { createDefaultSspMetadata } from '../src/services/storageService';
 import { unsavedSspMetadataFields } from '../src/services/unsavedText';
 import type { AssessmentState } from '../src/types/cmmc';
+import { SSP_METADATA_FIELDS } from '../src/types/sspMetadata';
 import type { SspMetadataRecord } from '../src/types/sspMetadata';
 import type { Tenant } from '../src/types/tenant';
 
@@ -129,6 +130,17 @@ assert(unsavedSspMetadataFields({ systemEnvironment: 'E' }, null, 'p1').length =
 const u2 = unsavedSspMetadataFields({ systemEnvironment: 'E', systemName: 'S' }, { systemName: 'S' }, 'p1');
 assert(u2.length === 1 && u2[0].key === 'ssp:p1:systemEnvironment' && u2[0].label === 'SSP field, systemEnvironment' && u2[0].text === 'E', 'U2 one differing field gives one entry with a field-name label', u2);
 assert(unsavedSspMetadataFields({ systemEnvironment: '' }, { systemEnvironment: 'X' }, 'p1').length === 0, 'U3 an empty draft is not reported');
+const dflt = defaults as unknown as Record<string, string>;
+assert(unsavedSspMetadataFields(dflt, {}, 'p1', dflt).length === 0, 'U4 the values a blank form fills in by itself are not unsaved text');
+const u5 = unsavedSspMetadataFields({ ...dflt, systemEnvironment: 'E' }, {}, 'p1', dflt);
+assert(u5.length === 1 && u5[0].key === 'ssp:p1:systemEnvironment', 'U5 a typed field is reported on top of the defaults', u5);
+const u6 = unsavedSspMetadataFields({ ...dflt, systemName: 'Typed' }, {}, 'p1', dflt);
+assert(u6.length === 1 && u6[0].key === 'ssp:p1:systemName', 'U6 a default field the user changed is reported', u6);
+assert(unsavedSspMetadataFields({ ...dflt, assessmentDate: '1999-01-01' }, {}, 'p1', dflt).length === 0, 'U7 the assessment date is not reported while the server has none');
+const nonEmptyDefaults = SSP_METADATA_FIELDS.filter((f) => typeof dflt[f] === 'string' && dflt[f] !== '').length;
+assert(nonEmptyDefaults >= 3 && unsavedSspMetadataFields(dflt, {}, 'p1').length === nonEmptyDefaults, 'U8 without the defaults every non-empty default field is reported, as before', nonEmptyDefaults);
+const ctxSource = fs.readFileSync(path.join(process.cwd(), 'src/context/AssessmentContext.tsx'), 'utf8').replace(/\r\n/g, '\n');
+assert(/unsavedSspMetadataFields\([\s\S]{0,200}createDefaultSspMetadata\(/.test(ctxSource), 'U9 the context passes the blank form\'s defaults to the unsaved-text report');
 
 console.log('\n--- Source ---');
 const syncSource = fs.readFileSync(path.join(process.cwd(), 'src/data/sspMetadataSync.ts'), 'utf8');

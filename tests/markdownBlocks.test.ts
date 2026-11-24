@@ -2,7 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { parseMarkdownBlocks, parseInline, Block } from '../src/utils/markdownBlocks';
+import { parseMarkdownBlocks, parseInline, stripInlineBold, Block } from '../src/utils/markdownBlocks';
 import { MarkdownPreview } from '../src/components/common/MarkdownPreview';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import type { Tenant } from '../src/types/tenant';
@@ -94,6 +94,16 @@ const docHtml = render(doc, 2);
 assert(!docHtml.includes('**') && !docHtml.includes('<h1') && !docHtml.includes('<h2'), 'a generated policy renders with no stray bold markers');
 assert(doc.includes('| Date |') && docHtml.includes('<thead') && docHtml.includes('<h3') && docHtml.includes('<h4'), 'the revision table gets a header row and the headings shift by two', null);
 assert(docHtml.includes('<li><strong') && docHtml.includes('Acme'), 'the metadata is a bullet list with bold labels');
+
+// stripInlineBold: the plain-text twin of the bold rule
+assert(stripInlineBold('via **Microsoft Entra ID** and') === 'via Microsoft Entra ID and', 'stripInlineBold removes a bold pair');
+assert(stripInlineBold('(**Microsoft Intune** / **DISA STIG**s)') === '(Microsoft Intune / DISA STIGs)', 'stripInlineBold removes every pair and keeps the text after it');
+assert(stripInlineBold('**Intune**/MDM') === 'Intune/MDM', 'stripInlineBold removes a pair touching other text');
+assert(stripInlineBold('a ** b ** c') === 'a ** b ** c', 'stripInlineBold leaves markers with spaces inside');
+assert(stripInlineBold('**a\nb**') === '**a\nb**', 'stripInlineBold never joins lines');
+assert(stripInlineBold('x *em* y') === 'x *em* y', 'stripInlineBold leaves single asterisks');
+assert(stripInlineBold('***x***') === '*x*', 'stripInlineBold on triple asterisks leaves the italic marks', stripInlineBold('***x***'));
+assert(stripInlineBold('') === '', 'stripInlineBold of nothing is nothing');
 
 // The views use the shared renderer
 for (const rel of ['src/views/PolicyLibraryView.tsx', 'src/components/settings/EnclaveSettings.tsx']) {

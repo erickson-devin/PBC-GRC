@@ -27,6 +27,8 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTenant } from '../../context/TenantContext';
 import { FRAMEWORK_REGISTRY, getFrameworkControls } from '../../data/frameworks';
 import { getSprsPointDeduction } from '../../data/reports/sprsCompiler';
+import { sprsWeightCounts } from '../../data/reports/sprsWeightCounts';
+import { frameworkHasBaselines } from '../../data/frameworkCapabilities';
 import { menuLockReason, overlayBannerText, overlayRemovals } from '../../data/overlayScoping';
 import { programFrameworkControls } from '../../data/programScope';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
@@ -97,7 +99,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
   const banner = overlayBannerText(removals, overlayLock);
 
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
-  const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1>('ALL');
+  const [selectedWeightFilter, setSelectedWeightFilter] = useState<'ALL' | 5 | 3 | 1 | 0>('ALL');
   const [selectedBaselineFilter, setSelectedBaselineFilter] = useState<'ALL' | 'LOW' | 'MODERATE' | 'HIGH' | 'PRIVACY'>('ALL');
   const [selectedKindFilter, setSelectedKindFilter] = useState<'ALL' | 'BASE' | 'ENHANCEMENT'>('ALL');
   // The SP 800-53 catalog has hundreds of controls: draw a page at a time
@@ -153,17 +155,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
 
   // Impact weight counts for CMMC Level 2
   const weightCounts = useMemo(() => {
-    if (activeFramework !== 'CMMC_L2') return { five: 0, three: 0, one: 0 };
-    let five = 0;
-    let three = 0;
-    let one = 0;
-    for (const c of frameworkControls) {
-      const w = getSprsPointDeduction(c.id);
-      if (w === 5) five++;
-      else if (w === 3) three++;
-      else if (w === 1) one++; // 3.12.4 (SSP) has no point value
-    }
-    return { five, three, one };
+    if (activeFramework !== 'CMMC_L2') return { five: 0, three: 0, one: 0, none: 0 };
+    return sprsWeightCounts(frameworkControls); // the four classes add up to the controls (3.12.4 has no point value)
   }, [activeFramework, frameworkControls]);
 
   // The search also reads the objective narratives (#305)
@@ -196,8 +189,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
       }
 
       // Baseline impact filter (per NIST SP 800-53B guidelines)
-      if (activeFramework === 'NIST_800_171_R3') {
-        // Rev. 3 requirements carry no baseline: the filter is not offered (a choice made on another framework must not hide them)
+      if (!frameworkHasBaselines(activeFramework)) {
+        // No baselines in this framework: the filter is not offered, and a choice made on another framework must not hide controls
       } else if (selectedBaselineFilter !== 'ALL' && ctrl.baselines) {
         // SP 800-53B baseline membership, exactly (SP 800-53 controls carry it)
         if (!ctrl.baselines[selectedBaselineFilter.toLowerCase() as 'low' | 'moderate' | 'high' | 'privacy']) return false;
@@ -559,8 +552,8 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
             })}
           </div>
 
-          {/* Baseline Filter Dropdown (Rev. 3 requirements carry no baselines) */}
-          {activeFramework !== 'NIST_800_171_R3' && (
+          {/* Baseline Filter Dropdown (only a framework with baselines offers it) */}
+          {frameworkHasBaselines(activeFramework) && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-semibold text-slate-400 mr-1 flex items-center gap-1">
               <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" /> Baseline:
@@ -648,6 +641,21 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 <span>1-Pt (Std Impact)</span>
                 <span className="text-xs font-mono opacity-80">({weightCounts.one})</span>
               </button>
+              {weightCounts.none > 0 && (
+                <button
+                  onClick={() => setSelectedWeightFilter(0)}
+                  title="3.12.4 (System Security Plan) carries no SPRS point value: without a plan the assessment cannot be scored."
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                    selectedWeightFilter === 0
+                      ? 'bg-slate-800 text-slate-200 border border-slate-600 font-bold shadow-sm'
+                      : 'bg-slate-950 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                  <span>No point value</span>
+                  <span className="text-xs font-mono opacity-80">({weightCounts.none})</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -710,7 +718,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                 <th className="py-3.5 px-4">Title & Authority Reference</th>
                 <th className="py-3.5 px-4">Family / Domain</th>
                 <th className="py-3.5 px-4">Audit Status</th>
-                <th className="py-3.5 px-4">Equivalencies</th>
+                <th className="py-3.5 px-4">Reference mappings</th>
                 <th className="py-3.5 px-4">Evidence</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -823,7 +831,7 @@ const AssessmentMatrixContent: React.FC<AssessmentMatrixProps> = ({ onSelectCont
                           {mappings.slice(0, 2).map((m, idx) => (
                             <span
                               key={idx}
-                              title={`${m.targetFramework}: ${m.targetTitle || m.targetControlId}`}
+                              title={`${FRAMEWORK_REGISTRY[m.targetFramework]?.shortName ?? m.targetFramework} (reference): ${m.targetTitle || m.targetControlId}`}
                               className="text-xs font-mono px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30"
                             >
                               {m.targetControlId}

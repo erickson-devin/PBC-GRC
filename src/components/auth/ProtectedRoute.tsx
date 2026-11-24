@@ -67,7 +67,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
           Authentication Required
         </h3>
         <p className="text-xs text-slate-400 mb-4 max-w-xs">
-          Please sign in with your enterprise credentials to access the CMMC assessment enclave.
+          Please sign in with your enterprise credentials to access the compliance platform.
         </p>
         <button
           onClick={() => openAuthModal('signin', '/app')}

@@ -30,6 +30,8 @@ import { BrandLogo } from '../common/BrandLogo';
 import { BuildStamp } from '../common/BuildStamp';
 import { canRoleReviewSspImports } from '../../utils/roles';
 import { roleShortLabel } from '../../data/roleView';
+import { programGate } from '../../data/programDefaultChoice';
+import { chromeProgramState, noProgramChromeLabel } from '../../data/noProgramChromeView';
 
 // ─── Badge Design System ────────────────────────────────────────────────────
 type BadgeVariant = 'neutral' | 'status' | 'accent';
@@ -88,7 +90,17 @@ export const Sidebar: React.FC = () => {
     currentRole,
     isSuperAdmin,
     activeFramework,
+    activeProgram,
+    programs,
+    programsStatus,
+    canManagePrograms,
   } = useTenant();
+  // Before the first program (or with every program archived) the counts, percentages and the progress bar would describe nothing
+  const chrome = chromeProgramState({
+    serverBacked: !!currentTenant.serverBacked,
+    hasActiveProgram: !!activeProgram,
+    gate: programGate({ programsStatus, programs, canManagePrograms }),
+  });
 
   const totalControls = frameworkControls.length || metrics.totalControls || 17;
   const guidance = frameworkGuidance(activeFramework);
@@ -120,9 +132,9 @@ export const Sidebar: React.FC = () => {
         ...(currentTenant.serverBacked ? [{ id: 'responsibilities' as const, label: 'My Responsibilities', icon: UserCheck }] : []),
         {
           id: 'matrix',
-          label: `Control Matrix (${totalControls})`,
+          label: chrome === 'program' ? `Control Matrix (${totalControls})` : 'Control Matrix',
           icon: CheckSquare,
-          badge: completionLabel,
+          badge: chrome === 'program' ? completionLabel : undefined,
           badgeVariant: metrics.isSprsReady ? 'status' : 'neutral',
         },
         {
@@ -176,7 +188,7 @@ export const Sidebar: React.FC = () => {
           id: 'ssp',
           label: 'System Security Plan (SSP)',
           icon: FileText,
-          badge: metrics.isSprsReady ? 'Audit Ready' : `${metrics.completionPercentage}%`,
+          badge: chrome === 'program' ? (metrics.isSprsReady ? 'Audit Ready' : `${metrics.completionPercentage}%`) : undefined,
           badgeVariant: metrics.isSprsReady ? 'status' : 'neutral',
         },
         // Imported plans can contain CUI: not offered to viewers
@@ -362,31 +374,41 @@ export const Sidebar: React.FC = () => {
             </p>
           </div>
 
-          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-            <span className="text-slate-400">Controls Met</span>
-            <span className="font-semibold text-white">
-              {metrics.metCount} / {metrics.totalControls}
-            </span>
-          </div>
-          
-          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-500 rounded-full ${
-                metrics.isSprsReady ? 'bg-emerald-500' : 'bg-brand-500'
-              }`}
-              style={{ width: `${metrics.completionPercentage}%` }}
-            />
-          </div>
+          {chrome === 'program' && (
+            <>
+              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                <span className="text-slate-400">Controls Met</span>
+                <span className="font-semibold text-white">
+                  {metrics.metCount} / {metrics.totalControls}
+                </span>
+              </div>
+
+              <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 rounded-full ${
+                    metrics.isSprsReady ? 'bg-emerald-500' : 'bg-brand-500'
+                  }`}
+                  style={{ width: `${metrics.completionPercentage}%` }}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       {/* Footer Info */}
       <div className="hidden md:block pt-4 border-t border-slate-800/80 text-xs text-slate-400 space-y-1">
-        <p className="flex items-center gap-1">
-          <Layers className="w-3.5 h-3.5 text-slate-400" />
-          <span>{guidance.authority} Compliant</span>
-        </p>
-        <p>{totalControls} Controls • {guidance.poamPermitted ? 'Time-Bounded POA&Ms' : 'Zero POA&Ms Allowed'}</p>
+        {chrome === 'program' ? (
+          <>
+            <p className="flex items-center gap-1">
+              <Layers className="w-3.5 h-3.5 text-slate-400" />
+              <span>Framework: {guidance.authority}</span>
+            </p>
+            <p>{totalControls} Controls • {guidance.poamPermitted ? 'Time-Bounded POA&Ms' : 'Zero POA&Ms Allowed'}</p>
+          </>
+        ) : (
+          <p>{noProgramChromeLabel(chrome)}</p>
+        )}
         <BuildStamp />
       </div>
     </aside>

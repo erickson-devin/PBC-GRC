@@ -1,7 +1,7 @@
 import { CompiledDocument, MachineReadablePackage, POAMEntry } from '../../types/report';
 import { AssessmentState } from '../../types/cmmc';
 import { computeSha256 } from '../audit/cryptoUtils';
-import { NOT_RECORDED } from './documentDefaults';
+import { NOT_RECORDED, SIGNATURE_BLANK } from './documentDefaults';
 import { csvCell } from './csv';
 import { generateInventoryCsv, isInventoryDocumentType } from './inventoryDocuments';
 
@@ -521,12 +521,12 @@ export function generatePrintableHtml(
         <div class="signature-box">
           <div class="signature-line"></div>
           <div class="signature-role">System Owner</div>
-          <div class="signature-name">Name: ${escapeHtml(meta.systemOwner || NOT_RECORDED)} — Date: ________</div>
+          <div class="signature-name">Name: ${SIGNATURE_BLANK} — Date: ${SIGNATURE_BLANK}</div>
         </div>
         <div class="signature-box">
           <div class="signature-line"></div>
           <div class="signature-role">Assessor / Author</div>
-          <div class="signature-name">Name: ${escapeHtml(meta.primaryAssessor || NOT_RECORDED)} — Date: ________</div>
+          <div class="signature-name">Name: ${SIGNATURE_BLANK} — Date: ${SIGNATURE_BLANK}</div>
         </div>
       </div>
     </div>

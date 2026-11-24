@@ -26,7 +26,7 @@ import {
   FRAMEWORK_REGISTRY,
 } from '../src/data/frameworks';
 import { ReportMetadata, ReportSection } from '../src/types/report';
-import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED, NOT_RECORDED, NO_MILESTONES_RECORDED, NO_CUECS_RECORDED, NO_STACK_PROFILE_RECORDED, NO_FAMILY_IMPLEMENTATION_RECORDED, UNSIGNED_ATTESTATION_NOTE } from '../src/data/reports/documentDefaults';
+import { NO_CSP_RECORDED as NO_CSP_DEFAULT, NO_ORGANIZATION_RECORDED, NO_SYSTEM_NAME_RECORDED, NO_SYSTEM_OWNER_RECORDED, NO_SECURITY_OFFICIAL_RECORDED, NO_ASSESSOR_RECORDED, NO_CAGE_CODE_RECORDED, NO_SAM_STATUS_RECORDED, NO_BOUNDARY_RECORDED, NO_SERVICE_COMMITMENTS_RECORDED, NOT_RECORDED, NO_MILESTONES_RECORDED, NO_CUECS_RECORDED, NO_STACK_PROFILE_RECORDED, NO_FAMILY_IMPLEMENTATION_RECORDED, UNSIGNED_ATTESTATION_NOTE, SIGNATURE_BLANK } from '../src/data/reports/documentDefaults';
 import { getExportGaps } from '../src/data/reports/exportReadiness';
 import { controlPoamMap } from '../src/data/reports/controlPoamView';
 import type { ControlPoamRecord } from '../src/types/controlPoam';
@@ -38,8 +38,9 @@ import { createDefaultSspMetadata, scrubInventedMetadata, buildSspMarkdown, crea
 import type { Tenant } from '../src/types/tenant';
 import { generatePolicyDocument } from '../src/data/reports/policyDocumentGenerator';
 import { getControlObjectives } from '../src/data/cmmcGuide/objectives';
-import { guideObjectives } from '../src/data/cmmcGuide/guide';
+import { CMMC_L2_GUIDE, cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import { composeImplementationStatement } from '../src/data/cmmcGuide/sspStatement';
+import { localDateIso } from '../src/utils/localDate';
 import fs from 'fs';
 import path from 'path';
 import { ControlState, EvidenceItem, AssessmentState } from '../src/types/cmmc';
@@ -211,9 +212,9 @@ async function runArtifactGeneratorTests() {
       const c = l2.find(x => x.id === 'AC.L1-3.1.1')!;
       const g = guideObjectives('3.1.1', 'CMMC_L2');
       const base = getControlObjectives(c.id, c.title, c.assessmentObjectives, undefined, 'CMMC_L2');
-      const answers = (statuses: Record<string, string>): Record<string, any> => {
+      const answers = (statuses: Record<string, string>, narratives: Record<string, string> = {}): Record<string, any> => {
         const out: Record<string, any> = {};
-        for (const o of base) if (statuses[o.letter]) out[o.id] = { ...o, status: statuses[o.letter] };
+        for (const o of base) if (statuses[o.letter]) out[o.id] = { ...o, status: statuses[o.letter], ...(narratives[o.letter] !== undefined ? { implementationNarrative: narratives[o.letter] } : {}) };
         return out;
       };
       const stateFor = (id: string, status: ControlState['status'], notes = ''): Record<string, ControlState> => ({
@@ -236,7 +237,9 @@ async function runArtifactGeneratorTests() {
       assert(p3.weaknessDescription.includes('are recorded as met or not applicable') && p3.weaknessDescription.includes('recorded as Not met'), 'P3 all objectives Met but the requirement is not');
 
       const p4 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), undefined, 'CMMC_L2')[0];
-      assert(p4.weaknessDescription === `Control requirement not met: ${c.plainEnglishSummary || c.title}.` && p4.remediationPlan.includes('Validate objective: "'), 'P4 objectives undefined keeps the old wording');
+      // #322: the requirement is quoted in the assessment guide's wording, not the catalog's summary
+      const p4Statement = CMMC_L2_GUIDE.requirements.find(r => r.number === cmmcNumberOf(c.id))!.statement.replace(/\.\s*$/, '');
+      assert(p4.weaknessDescription === `Control requirement not met: ${p4Statement}.` && p4.remediationPlan.includes('Validate objective: "'), 'P4 objectives undefined: the requirement in the guide\'s wording', p4.weaknessDescription);
 
       const soc2 = getFrameworkControls('SOC_2_TYPE_II');
       const soc2States: Record<string, ControlState> = {};
@@ -246,7 +249,22 @@ async function runArtifactGeneratorTests() {
       assert(ac2.length === 1 && JSON.stringify(generatePOAMEntries(ac2, stateFor('AC-2', 'NOT_MET'), {}, 'NIST_800_53_REV5')) === JSON.stringify(generatePOAMEntries(ac2, stateFor('AC-2', 'NOT_MET'))), 'P5 NIST 800-53 AC-2 is byte-identical');
 
       const p6 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET', 'N1'), mixed, 'CMMC_L2')[0];
-      assert(p6.weaknessDescription.startsWith('Objectives not met') && p6.weaknessDescription.endsWith('Recorded implementation notes: N1'), 'P6 the objectives come first, then the notes excerpt');
+      assert(p6.weaknessDescription.startsWith('Objectives not met') && !p6.weaknessDescription.includes('Recorded implementation notes'), 'P6 the objectives come first and the control notes excerpt is dropped (#327)');
+
+      // #327: the summary quotes what was recorded for the open objectives, not the control's notes
+      const p11 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET', '[Objective A - x]:\nMET_TEXT_A'), answers({ a: 'MET', b: 'NOT_MET' }, { a: 'MET_TEXT_A', b: 'GAP_TEXT_B' }), 'CMMC_L2')[0];
+      assert(p11.weaknessDescription.includes('Recorded narratives of the open objectives: [b] GAP_TEXT_B') && !p11.weaknessDescription.includes('MET_TEXT_A'), `P11 the open objective's own words are quoted, a Met objective's are not (found: ${p11.weaknessDescription.slice(-120)})`);
+      const tmplB = base.find(o => o.letter === 'b')!.prefilledTemplate;
+      assert(Boolean(tmplB && tmplB.trim()), 'P12 guard: objective b carries a starter template');
+      const p12 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), answers({ b: 'NOT_MET' }, { b: tmplB }), 'CMMC_L2')[0];
+      assert(!p12.weaknessDescription.includes('Recorded narratives'), 'P12 an unedited starter template is not quoted');
+      const p13 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), answers({ b: 'NOT_MET' }, { b: 'x'.repeat(200) }), 'CMMC_L2')[0];
+      assert(p13.weaknessDescription.includes(`[b] ${'x'.repeat(160)}...`) && !p13.weaknessDescription.includes('x'.repeat(161)), 'P13 a long narrative is cut at 160 characters');
+      const p14 = generatePOAMEntries([c], stateFor(c.id, 'NOT_MET'), answers({ b: 'NOT_MET', d: 'NOT_MET' }, { b: 'B1', d: 'D1' }), 'CMMC_L2')[0];
+      assert(p14.weaknessDescription.includes('[b] B1; [d] D1'), 'P14 several open objectives are joined with semicolons');
+      const p15 = generatePOAMEntries([soc2[0]], stateFor(soc2[0].id, 'NOT_MET', 'N1'), {}, 'SOC_2_TYPE_II')[0];
+      assert(p15.weaknessDescription === 'Recorded implementation notes: N1', `P15 a SOC 2 control keeps the notes excerpt (found: ${p15.weaknessDescription})`);
+      assert(generatePoamCsv([p11]).includes('GAP_TEXT_B'), 'P16 the CSV carries the open objective narrative');
 
       const c347 = l2.find(x => x.id === 'CM.L2-3.4.7')!;
       const g347 = guideObjectives('3.4.7', 'CMMC_L2');
@@ -739,6 +757,20 @@ async function runArtifactGeneratorTests() {
     assert(itemOf(soc2Doc, 'Primary Assessor / Service Auditor') === undefined, 'S197-3 the management assertion has no service auditor row');
     const sigHtml = generatePrintableHtml(fullSsp, mockMetadata as never);
     assert(!/class="signature-line">[^<]+</.test(sigHtml) && !sigHtml.includes('Certified Lead Assessor'), 'S197-4 the cover signature lines are blank and nobody is called certified');
+
+    // #323: nobody signed, so the cover names nobody; dates are the local date, not the UTC date
+    assert(localDateIso(new Date(2026, 10, 20, 23, 30)) === '2026-11-20' && localDateIso(new Date(2026, 0, 5)) === '2026-01-05', 'S323-1 localDateIso is the local calendar date, zero padded');
+    const ownerHtml = generatePrintableHtml(fullSsp, { ...mockMetadata, systemOwner: 'Owner-323' } as never);
+    assert(!ownerHtml.includes('Name: Owner-323') && ownerHtml.includes(`Name: ${SIGNATURE_BLANK}`), 'S323-2 the cover signature block names nobody');
+    const dateBefore = localDateIso();
+    const noDateGenerated = itemOf(compileNistSSP({ ...mockMetadata, assessmentDate: '' }, cmmcL1Controls, mockControlStates), 'Generated');
+    const dateAfter = localDateIso();
+    assert(noDateGenerated === dateBefore || noDateGenerated === dateAfter, `S323-3 a blank assessment date falls back to the local date (found: ${noDateGenerated})`);
+    const dateBefore2 = localDateIso();
+    const defaultDate = createDefaultSspMetadata({ id: 't323', name: 'Org' } as Tenant).assessmentDate;
+    const dateAfter2 = localDateIso();
+    assert(defaultDate === dateBefore2 || defaultDate === dateAfter2, `S323-4 the default SSP metadata date is the local date (found: ${defaultDate})`);
+    assert(!nistSlice.includes("toISOString().split('T')[0]"), 'S323-5 compileNistSSP has no UTC date fallback');
 
     // #199: principal service commitments
     const scDoc = compileSoc2SystemDescription({ ...soc2Meta, serviceCommitments: 'SC-199 recorded.' }, soc2Controls, mockSoc2States, mockEvidence);

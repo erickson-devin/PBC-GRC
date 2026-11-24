@@ -162,7 +162,7 @@ export interface ProgramEvent {
 
 export type ProgramUsage = { evidence: number; imports: number; poam: number };
 /** What the program page shows for a program: control coverage, evidence files (not the inherited copies) and open POA&M items. */
-export type ProgramMetrics = { documented: number; total: number; evidence: number; openPoam: number };
+export type ProgramMetrics = { documented: number; total: number; evidence: number; openPoam: number; controlPoam: number };
 export type MigrationCounts = Record<ProgramScopedTable, number> & { total: number };
 
 const memoryPrograms = new Map<string, Program>(); // key: id
@@ -607,10 +607,18 @@ export async function cloneProgramContent(source: Program, target: Program, who:
   return copied;
 }
 
+/** How many catalog controls are not MET (a missing status counts as open): the POA&M control entries the POA&M screen lists. */
+export function countOpenControlEntries(catalog: Iterable<string>, statusOf: (id: string) => string | undefined): number {
+  let n = 0;
+  for (const id of catalog) if (statusOf(id) !== 'MET') n++;
+  return n;
+}
+
 /**
  * The numbers a program card shows. total: the controls of the program's framework and baseline; documented: those with notes
  * (outside the vulnerability-management snapshot blocks), the status MET or, for CMMC Level 1 / 2, an objective narrative the SSP prints; evidence: files uploaded to the program (not inherited
- * copies); openPoam: open and in-progress POA&M items.
+ * copies); openPoam: open and in-progress vulnerability-management POA&M items; controlPoam: the POA&M control entries (one per catalog
+ * control whose status is not MET), the number the POA&M screen lists.
  */
 export async function getProgramMetrics(program: Program): Promise<ProgramMetrics> {
   const scope = { tenantId: program.tenantId, programId: program.id };
@@ -634,7 +642,7 @@ export async function getProgramMetrics(program: Program): Promise<ProgramMetric
     if (a?.status === 'MET' || hasSspStatement(controlId, stripDelimitedBlocks(a?.notes ?? ''), guarded ? objectives : undefined, program.frameworkId)) documented++;
   }
   const usage = await countProgramUsage(scope);
-  return { documented, total: catalog.size, evidence: usage.evidence, openPoam: await countOpenPoamItems(scope) };
+  return { documented, total: catalog.size, evidence: usage.evidence, openPoam: await countOpenPoamItems(scope), controlPoam: countOpenControlEntries(catalog, (id) => assessments.get(id)?.status) };
 }
 
 async function requireProgram(tenantId: string, id: string): Promise<Program> {

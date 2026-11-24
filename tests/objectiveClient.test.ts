@@ -522,6 +522,13 @@ function controlSaveFailures() {
   const staleMsg = controlSaveFailureMessage('AC.L2-3.1.1', { implementationNotes: SECRET }, staleErr) ?? '';
   assert(staleMsg === staleWriteMessage('control', 'AC.L2-3.1.1') && !staleMsg.includes(SECRET), 'S70-C03 a stale write reads the fixed notice for the control and never the text');
 
+  const l1Msg = controlSaveFailureMessage('AC.L1-3.1.1', { status: 'MET' }, new Error('x'), 'CMMC_L1') ?? '';
+  assert(l1Msg.includes('AC.L1-b.1.i') && !l1Msg.includes('AC.L1-3.1.1'), 'S1 a Level 1 program names the control by the guide id it shows', l1Msg);
+  assert((controlSaveFailureMessage('AC.L1-3.1.1', { status: 'MET' }, new Error('x'), 'CMMC_L2') ?? '').includes('AC.L2-3.1.1'), 'S2 a Level 2 program names the Level 2 guide id');
+  assert(controlSaveFailureMessage('AC.L1-3.1.1', { implementationNotes: SECRET }, staleErr, 'CMMC_L1') === staleWriteMessage('control', 'AC.L1-b.1.i'), 'S3 the stale notice names the shown id too');
+  assert(controlSaveFailureMessage('AC-2', { status: 'MET' }, new Error('x'), 'NIST_800_53_REV5') === 'The change to the status of AC-2 was not saved: x', 'S4 another framework keeps its id');
+  assert(controlSaveFailureMessage('AC.L1-3.1.1', { status: 'MET' }, new Error('x')) === 'The change to the status of AC.L1-3.1.1 was not saved: x', 'S5 without a framework the stored id is named, as before');
+
   const local = ctl({ status: 'MET', responsibleRole: 'CISO', implementationNotes: SECRET });
   const server = ctl({ status: 'IN_PROGRESS', responsibleRole: 'IT / Security Lead', implementationNotes: 'server notes' });
   const reverted = revertFailedControlFields(local, server, { status: 'MET', updatedBy: 'Ann' });

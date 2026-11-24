@@ -12,9 +12,11 @@ import { AssessmentObjective } from '../../types/assessment';
 import { getControlObjectives } from '../cmmcGuide/objectives';
 import { cmmcNumberOf } from '../cmmcGuide/guide';
 import { cmmcDisplayId, cmmcGuideLetter } from '../cmmcGuide/displayId';
-import { composeImplementationStatement } from '../cmmcGuide/sspStatement';
+import { composeImplementationStatement, objectiveNarrativePrints } from '../cmmcGuide/sspStatement';
 import { appendRemediationPolicyParagraph } from '../vmRemediation';
 import { statusDisplayLabel } from '../statusLabels';
+import { localDateIso } from '../../utils/localDate';
+import { sspRequirementLine } from '../ssp/requirementLine';
 import { FRAMEWORK_REGISTRY } from '../frameworks';
 import { computeDomainStats } from '../frameworks/domainStats';
 import { CATEGORY_INFO, CMMC_ASSET_CATEGORIES, boundaryNarrative } from '../telemetry/assetScope';
@@ -148,6 +150,27 @@ export function cmmcObjectiveWeakness(
 }
 
 /**
+ * #327: what a person recorded for the objectives that are still open ("[b] <their narrative>"), so a POA&M names the gap in their words
+ * and not the control's notes (which often hold a Met objective's text). An objective whose narrative would not print in the SSP (empty or
+ * a starter template) adds nothing. '' for a non-CMMC control, no objective answers, or nothing to quote.
+ */
+export function cmmcOpenObjectiveNarratives(
+  ctrl: FrameworkControlDefinition,
+  objectives: Record<string, AssessmentObjective> | undefined,
+  framework: string
+): string {
+  if (objectives === undefined || cmmcNumberOf(ctrl.id) === null) return '';
+  const objs = getControlObjectives(ctrl.id, ctrl.title, ctrl.assessmentObjectives, objectives, framework || 'CMMC_L2');
+  return objs
+    .filter((o) => o.status !== 'MET' && o.status !== 'NOT_APPLICABLE' && objectiveNarrativePrints(o, ''))
+    .map((o) => {
+      const text = (o.implementationNarrative ?? '').trim();
+      return `[${cmmcGuideLetter(ctrl.id, o.letter, framework)}] ${text.length > 160 ? `${text.substring(0, 160)}...` : text}`;
+    })
+    .join('; ');
+}
+
+/**
  * Automatically aggregates NOT_MET and IN_PROGRESS (and unaddressed) controls into structured POA&M entries.
  * #198: only what is recorded is stated. A due date, resources and milestones are never invented; they print as not recorded.
  * #304: `recorded` holds what a person recorded per control (owner, scheduled completion, resources, plan, milestones): each recorded value
@@ -176,14 +199,16 @@ export function generatePOAMEntries(
 
       // Weakness description: the recorded notes when there are any, else the requirement itself
       const notes = state?.implementationNotes?.trim();
-      // #285: a CMMC control with objective answers names the objectives that are not Met, then the notes excerpt
+      // #285: a CMMC control with objective answers names the objectives that are not Met; #327: then what was recorded for those
+      // objectives (not the control's notes, which often hold a Met objective's text). Other frameworks keep the notes excerpt.
       const objectiveWeakness = cmmcObjectiveWeakness(ctrl, status, objectives, framework ?? '');
+      const narr = objectiveWeakness ? cmmcOpenObjectiveNarratives(ctrl, objectives, framework ?? '') : '';
       const notesLine = notes ? `Recorded implementation notes: ${notes.substring(0, 160)}${notes.length > 160 ? '...' : ''}` : '';
       const weaknessDesc = objectiveWeakness
-        ? objectiveWeakness.description + (notesLine ? ` ${notesLine}` : '')
+        ? objectiveWeakness.description + (narr ? ` Recorded narratives of the open objectives: ${narr}` : '')
         : notes
           ? notesLine
-          : `Control requirement not met: ${ctrl.plainEnglishSummary || ctrl.title}.`;
+          : `Control requirement not met: ${(sspRequirementLine(ctrl, framework ?? '').text || ctrl.title).replace(/\.\s*$/, '')}.`;
 
       // Remediation action plan
       const primaryObjective = ctrl.assessmentObjectives?.[0] || 'Verify technical and administrative safeguards satisfy baseline.';
@@ -255,7 +280,7 @@ export function compileNistSSP(
           { label: 'Primary Assessor / Author', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Operational Status', value: metadata.operationalStatus || 'Operational' },
           { label: 'Document Version', value: metadata.version || '1.0.0' },
-          { label: 'Assessment Baseline Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Assessment Baseline Date', value: metadata.assessmentDate || localDateIso() },
           { label: 'Classification Level', value: metadata.classificationLevel || 'UNCLASSIFIED // CUI' },
           ...sspIdentificationItems(sspProfile),
         ],
@@ -408,7 +433,7 @@ export function compileNistSSP(
           { label: 'Primary Assessor / Lead Auditor', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Signature', value: SIGNATURE_BLANK },
           { label: 'Date signed', value: SIGNATURE_BLANK },
-          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Generated', value: metadata.assessmentDate || localDateIso() },
         ],
       },
     ],
@@ -589,7 +614,7 @@ export function compilePOAM(
           { label: 'Lead Assessor Concurrence', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Signature', value: SIGNATURE_BLANK },
           { label: 'Date signed', value: SIGNATURE_BLANK },
-          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Generated', value: metadata.assessmentDate || localDateIso() },
         ],
       },
     ],
@@ -764,7 +789,7 @@ export function compileSoc2SystemDescription(
           { label: 'Service Organization Management', value: metadata.systemOwner || NO_SYSTEM_OWNER_RECORDED },
           { label: 'Signature', value: SIGNATURE_BLANK },
           { label: 'Date signed', value: SIGNATURE_BLANK },
-          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Generated', value: metadata.assessmentDate || localDateIso() },
         ],
       },
     ],
@@ -818,7 +843,7 @@ export function compileHipaaAssessment(
           { label: 'Designated ePHI System Name', value: metadata.systemName || NO_SYSTEM_NAME_RECORDED },
           { label: 'HIPAA Security Official', value: metadata.systemOwner || NO_SECURITY_OFFICIAL_RECORDED },
           { label: 'Lead Assessor / Auditor', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
-          { label: 'Evaluation Period / Date', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Evaluation Period / Date', value: metadata.assessmentDate || localDateIso() },
           { label: 'System Operational Status', value: metadata.operationalStatus || 'Operational' },
           { label: 'Target Safeguard Posture', value: '100% Implementation of Required & Addressable Specifications' },
         ],
@@ -913,7 +938,7 @@ export function compileHipaaAssessment(
           { label: 'Lead Assessor / Risk Analyst', value: metadata.primaryAssessor || NO_ASSESSOR_RECORDED },
           { label: 'Signature', value: SIGNATURE_BLANK },
           { label: 'Date signed', value: SIGNATURE_BLANK },
-          { label: 'Generated', value: metadata.assessmentDate || new Date().toISOString().split('T')[0] },
+          { label: 'Generated', value: metadata.assessmentDate || localDateIso() },
           { label: 'Compliance Score', value: `${metrics.completionPercentage}% of Safeguards Implemented (${metrics.metCount}/${metrics.totalControls})` },
         ],
       },

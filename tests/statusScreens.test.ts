@@ -64,8 +64,10 @@ assert(
 );
 assert(modal.includes('<span role="status" aria-live="polite" className="sr-only">{statusAnnouncement}</span>'), 'M10 the status announcement is a polite live region');
 
+const dialogView = src('src/data/controlDialogView.ts');
 assert(
-  modal.split('verified as Met or Not applicable').length - 1 === 2 && !modal.includes('MET or N/A') && !modal.includes('NOT_MET objective'),
+  dialogView.split('verified as Met or Not applicable').length - 1 === 2 && modal.includes('assessmentMethodBanner(')
+    && [modal, dialogView].every((t) => !t.includes('MET or N/A') && !t.includes('NOT_MET objective')),
   'M11 the assessment-method banner says Met and Not applicable in words, in both variants'
 );
 

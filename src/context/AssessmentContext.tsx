@@ -23,7 +23,8 @@ import { getControlObjectives, hasWrittenTemplate } from '../data/cmmcGuide/obje
 import { migrateCachedObjectives } from '../data/cmmcGuide/migration';
 import { browserCatalogUpdate } from '../data/cmmcGuide/catalogUpdateReview';
 import { checkControlStatusWrite, lowerRefusedMet, type ControlStatusDecision } from '../data/cmmcGuide/controlStatusGuard';
-import { normalizeImportedCmmcIds } from '../data/cmmcGuide/displayId';
+import { cmmcGuideObjectiveId, normalizeImportedCmmcIds } from '../data/cmmcGuide/displayId';
+import { objectiveNarrativesInSsp } from '../data/cmmcGuide/sspStatementView';
 import { CMMC_OBJECTIVE_CATALOG_REV, withGuideTitle } from '../data/cmmcGuide/guide';
 import { StorageService, createDefaultSspMetadata, createInitialState } from '../services/storageService';
 import { EvidenceVault } from '../services/evidenceVault';
@@ -199,7 +200,8 @@ interface AssessmentContextType {
 
   // NIST SP 800-171A Objective-Level Evaluation & Rollup
   getObjectivesForControl: (controlId: string) => AssessmentObjective[];
-  updateObjectiveStatus: (objectiveId: string, status: ObjectiveStatus) => void;
+  /** `narrative`, when given, is saved with the status in one write (the Not applicable reason). */
+  updateObjectiveStatus: (objectiveId: string, status: ObjectiveStatus, narrative?: string) => void;
   updateObjectiveNarrative: (objectiveId: string, narrative: string) => void;
   applyObjectivePrefilledNarrative: (objectiveId: string) => void;
   applyAllObjectiveTemplatesForControl: (controlId: string) => void;
@@ -523,6 +525,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   liveScopeKeyRef.current = liveScopeKey;
   const serverBackedRef = useRef(currentTenant.serverBacked);
   serverBackedRef.current = currentTenant.serverBacked;
+  const tenantRef = useRef(currentTenant);
+  tenantRef.current = currentTenant;
   useUnsavedTextProvider(() => {
     const s = stateRef.current;
     if (!serverBackedRef.current || programScopeKey(s.tenantId, s.programId) !== liveScopeKeyRef.current) return [];
@@ -594,14 +598,14 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           const next = revertFailedControlFields(local, liveControlsRef.current?.[controlId], update);
           return next === local ? prev : { ...prev, controls: { ...prev.controls, [controlId]: next } };
         });
-        const message = opts?.quiet ? null : controlSaveFailureMessage(controlId, update, err);
+        const message = opts?.quiet ? null : controlSaveFailureMessage(controlId, update, err, activeFramework);
         if (message !== null) setControlSaveError(p => coalesceSaveFailure(p, message));
         if (isStaleWriteError(err)) return 'stale';
         if ((err as { reason?: unknown } | null)?.reason === 'program_archived') return 'archived';
         return (err as { status?: unknown } | null)?.status === 0 ? 'unreachable' : 'failed';
       }
     });
-  }, [currentTenant.id, currentTenant.serverBacked, programScope, updateLiveControl]);
+  }, [currentTenant.id, currentTenant.serverBacked, programScope, updateLiveControl, activeFramework]);
 
   /** Puts a control's status back to the server's when a rolled-up status was never sent (its objectives failed to save), in the program it was made in. */
   const revertLocalControlStatus = useCallback((controlId: string, status: ControlStatus, scope: string) => {
@@ -1134,7 +1138,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // A 401 means the session has ended: the sign-in screen says so, and an alert here would come after the sign-out
       // A stale write (someone else saved this objective first) is a notice, not an alert; the text stays on screen (nothing to revert to)
       if (isStaleWriteError(err)) {
-        setControlSaveError(p => coalesceSaveFailure(p, staleWriteMessage('objective', inputs[0].objectiveId)));
+        setControlSaveError(p => coalesceSaveFailure(p, staleWriteMessage('objective', cmmcGuideObjectiveId(inputs[0].objectiveId, activeFramework))));
         return;
       }
       if (!(err instanceof ApiError && err.status === 401)) {
@@ -1143,7 +1147,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       revertObjectives(inputs.map(i => i.objectiveId), scope);
     });
     return objectiveSave.then(() => true, () => false);
-  }, [currentTenant.serverBacked, programScope, programId, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives, revertLocalControlStatus]);
+  }, [currentTenant.serverBacked, programScope, programId, updateLiveObjective, updateLiveObjectivesBulk, saveControl, revertObjectives, revertLocalControlStatus, activeFramework]);
 
   // Review of a conflict the one-time upload found: the id keeps its cached narrative until the user picks a text
   // Ids whose cached narrative is empty or equal to the server's need no decision: they are dropped (this heals caches from older builds)
@@ -1175,7 +1179,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setState(prev => (programScopeKey(prev.tenantId, prev.programId) !== programScope ? prev : resolveConflict(prev, objectiveId, choice, serverText)));
   }, [canEdit, writableState, programScope, updateLiveObjective, recordObjectiveNarrativeChange]);
 
-  const updateObjectiveStatus = useCallback((objectiveId: string, status: ObjectiveStatus) => {
+  const updateObjectiveStatus = useCallback((objectiveId: string, status: ObjectiveStatus, narrative?: string) => {
     if (objectiveWriteBlocked('objectives')) return;
     const s = writableState();
     if (!s) return;
@@ -1200,6 +1204,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const updatedObjective: AssessmentObjective = {
       ...target,
       status,
+      ...(narrative !== undefined ? { implementationNarrative: narrative } : {}),
       lastUpdated: now,
       updatedBy: currentUser.name,
     };
@@ -1236,6 +1241,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       },
     }));
 
+    // Digest and length only: the reason is never logged
+    if (narrative !== undefined) recordObjectiveNarrativeChange(objectiveId, target.implementationNarrative || '', narrative);
+
     if (rolledStatus === 'MET') {
       const metAfter = Object.entries(s.controls).filter(([id, c]) => id !== controlId && c.status === 'MET').length + 1;
       const totalRequired = FRAMEWORK_REGISTRY[activeFramework]?.totalControls || frameworkControls.length;
@@ -1247,7 +1255,8 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Save: the objective, and the rolled-up control status when it changed (otherwise the next live merge reverts it)
     if (currentTenant.serverBacked) {
       // The control's status goes out only after its objective is saved (the server checks Met against the saved objectives, #292)
-      const sent = saveObjectives([{ objectiveId, controlId, status }]);
+      // A reason sent with the status is a narrative save: the server refuses it when someone else changed this objective first
+      const sent = saveObjectives([narrative !== undefined ? { objectiveId, controlId, status, narrative, checkStale: true } : { objectiveId, controlId, status }]);
       if (rolledStatus !== currentCtrl.status) {
         const scope = programScope;
         void sent.then(ok => {
@@ -1269,7 +1278,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       previousState: currentCtrl.status,
       newState: rolledStatus,
     }).catch(() => {});
-  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, saveControl, revertLocalControlStatus, programScope]);
+  }, [objectiveWriteBlocked, writableState, objectivesOf, frameworkControls, currentUser, currentTenant.id, currentTenant.serverBacked, auditMetadata, activeFramework, triggerSprsCelebration, saveObjectives, saveControl, revertLocalControlStatus, programScope, recordObjectiveNarrativeChange]);
 
   const updateObjectiveNarrative = useCallback((objectiveId: string, narrative: string) => {
     if (objectiveWriteBlocked('narratives')) return;
@@ -1354,9 +1363,11 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       tags: [],
     };
 
+    // Where the SSP prints the objective narratives itself (CMMC), the template is written once, to the narrative: the notes are left alone
+    const writesNotes = !objectiveNarrativesInSsp(controlId, activeFramework);
     let combinedNotes = currentCtrl.implementationNotes || '';
     const sectionHeader = `[Objective ${target.letter.toUpperCase()} - ${target.text}]:\n${confirmedNarrative}`;
-    if (!combinedNotes.includes(confirmedNarrative)) {
+    if (writesNotes && !combinedNotes.includes(confirmedNarrative)) {
       combinedNotes = combinedNotes ? `${combinedNotes}\n\n${sectionHeader}` : sectionHeader;
     }
 
@@ -1431,7 +1442,9 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       tags: [],
     };
 
-    const newNotes = narrativeSections.join('\n\n');
+    // Where the SSP prints the objective narratives itself (CMMC), the templates are written once, to the narratives: the notes are left alone
+    const writesNotes = !objectiveNarrativesInSsp(controlId, activeFramework);
+    const newNotes = writesNotes ? narrativeSections.join('\n\n') : (currentCtrl.implementationNotes || '');
     // The control rolls up from all its objectives: one already NOT_MET, or one left without a template, keeps it from MET
     const rolledStatus: ControlStatus = calculateControlRollup(baseObjectives.map(o => nextObjectives[o.id] ?? o)).calculatedStatus;
     setState(prev => ({
@@ -1542,7 +1555,7 @@ export const AssessmentProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const s = stateRef.current;
     const live = liveSspMetadataRef.current;
     if (!serverBackedRef.current || !live || programScopeKey(s.tenantId, s.programId) !== liveScopeKeyRef.current) return [];
-    return unsavedSspMetadataFields(s.sspMetadata as unknown as Record<string, string | undefined>, live.metadata ?? {}, s.programId ?? 'default');
+    return unsavedSspMetadataFields(s.sspMetadata as unknown as Record<string, string | undefined>, live.metadata ?? {}, s.programId ?? 'default', createDefaultSspMetadata(tenantRef.current) as unknown as Record<string, string>);
   });
 
   // The send is assigned in an effect (not in render) so the flush on a program switch, which runs in the previous render's cleanup,

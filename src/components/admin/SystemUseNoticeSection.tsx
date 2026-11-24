@@ -4,6 +4,7 @@ import { ApiClient, ApiError } from '../../services/apiClient';
 import type { PlatformSystemUseNotice } from '../../services/apiClient';
 import { useAuth } from '../../context/AuthContext';
 import { ErrorNotice } from '../common/ErrorNotice';
+import { AccountSettingsModal } from '../auth/AccountSettingsModal';
 import { DEFAULT_SYSTEM_USE_NOTICE, SYSTEM_USE_NOTICE_MAX, normalizeNoticeText, validateNoticeDraft } from '../../data/systemUseNotice';
 
 const LOAD_ERROR = 'The system use notice could not be loaded. Check the connection to the server and try again.';
@@ -32,6 +33,7 @@ export const SystemUseNoticeSection: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,7 +180,12 @@ export const SystemUseNoticeSection: React.FC = () => {
               <p id={codeHelpId} className="mt-1 text-xs text-slate-400">Saving needs a fresh code. A code works once.</p>
             </div>
           ) : (
-            <p className="text-xs text-amber-300 leading-relaxed">Set up two-step verification on your own account before you change the notice.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-amber-300 leading-relaxed">Set up two-step verification on your own account before you change the notice.</p>
+              <button type="button" onClick={() => setAccountOpen(true)} className="btn-base btn-secondary px-3 py-1.5 text-xs">
+                Open Account Settings
+              </button>
+            </div>
           )}
           <ErrorNotice message={saveError ?? (changed ? validationError : null)} />
           <div className="flex flex-wrap justify-end gap-2">
@@ -207,6 +214,7 @@ export const SystemUseNoticeSection: React.FC = () => {
           </div>
         </div>
       )}
+      <AccountSettingsModal isOpen={accountOpen} onClose={() => setAccountOpen(false)} />
     </section>
   );
 };

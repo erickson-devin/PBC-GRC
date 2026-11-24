@@ -22,7 +22,6 @@ import { calculateSprsScore, formatSprsScore } from '../../data/reports/sprsComp
 import { remediationPriorities } from '../../data/reports/remediationPriority';
 import { cmmcDisplayId } from '../../data/cmmcGuide/displayId';
 import { useStorageConfig } from '../../hooks/useStorageConfig';
-import { storagePathLabel } from '../../data/audit/storageDriver';
 import { DomainCards } from './DomainCards';
 import { SprsGoalCard } from './SprsGoalCard';
 import { PoamTargetCard } from './PoamTargetCard';
@@ -425,7 +424,6 @@ export const ComplianceOverview: React.FC = () => {
         {/* Widget 2: Evidence Vault & Artifact Health */}
         {(() => {
           const storageProvider = storageConfig.provider;
-          const localStoragePath = storagePathLabel(storageConfig) ?? 'unknown';
           const isLocal = storageProvider === 'local';
 
           return (
@@ -493,12 +491,7 @@ export const ComplianceOverview: React.FC = () => {
               </div>
 
               <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                <span
-                  className="text-slate-400 text-xs truncate max-w-[260px]"
-                  title={`Local Storage Path: ${localStoragePath}`}
-                >
-                  {`Storage Path: ${localStoragePath}`}
-                </span>
+                <span className="text-slate-400 text-xs">Files are stored on this server.</span>
                 <button
                   onClick={() => setActiveTab('vault')}
                   className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1.5 hover:border-cyan-500/40 shrink-0"

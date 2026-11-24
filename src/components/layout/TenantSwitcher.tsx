@@ -16,6 +16,8 @@ import { OwnerMfaNotice } from '../auth/OwnerMfaNotice';
 import { errorMessage } from '../../utils/errors';
 
 import { DialogOverlay, DialogTitle } from '../common/DialogOverlay';
+import { programGate } from '../../data/programDefaultChoice';
+import { chromeProgramState } from '../../data/noProgramChromeView';
 export const TenantSwitcher: React.FC = () => {
   const {
     tenants,
@@ -24,9 +26,15 @@ export const TenantSwitcher: React.FC = () => {
     switchTenant,
     createTenant,
     isMspUser,
+    activeProgram,
+    programs,
+    programsStatus,
+    canManagePrograms,
   } = useTenant();
 
   const { metrics } = useAssessment();
+  // Before the first program the met count would describe a framework nobody chose (#326)
+  const hasProgram = chromeProgramState({ serverBacked: !!currentTenant.serverBacked, hasActiveProgram: !!activeProgram, gate: programGate({ programsStatus, programs, canManagePrograms }) }) === 'program';
 
   const [isTenantMenuOpen, setIsTenantMenuOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -138,8 +146,8 @@ export const TenantSwitcher: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
-              <span className="text-slate-400">•</span>
-              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/{metrics.totalControls} Met</span>
+              {hasProgram && <span className="text-slate-400">•</span>}
+              {hasProgram && <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/{metrics.totalControls} Met</span>}
             </div>
           </div>
         </div>
@@ -172,8 +180,8 @@ export const TenantSwitcher: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{getSamBadge(currentTenant.samStatus)}</span>
-              <span className="text-slate-400">•</span>
-              <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/{metrics.totalControls} Met</span>
+              {hasProgram && <span className="text-slate-400">•</span>}
+              {hasProgram && <span className="font-mono text-brand-400 font-semibold">{metrics.metCount}/{metrics.totalControls} Met</span>}
             </div>
           </div>
 

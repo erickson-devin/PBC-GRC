@@ -43,6 +43,8 @@ export interface ProgramMetrics {
   documented: number | null;
   total: number | null;
   openPoam: number | null;
+  /** POA&M control entries: catalog controls not MET (the POA&M screen's count). */
+  controlPoam: number | null;
   /** The server's `evidence` field. */
   evidenceCount: number | null;
 }

@@ -92,13 +92,17 @@ const MetricsRow: React.FC<{ state: MetricsState | undefined }> = ({ state }) =>
   const m = state && typeof state === 'object' ? state : null;
   const coverage = m && m.documented !== null && m.total !== null ? `${m.documented} / ${m.total}` : '—';
   return (
-    <dl className="grid grid-cols-3 gap-2" aria-busy={state === 'loading'}>
+    <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2" aria-busy={state === 'loading'}>
       <div className="rounded-xl bg-slate-950/50 border border-slate-800 px-3 py-2">
         <dt className="text-xs text-slate-400">Documented</dt>
         <dd className="text-sm font-bold text-white font-mono">{coverage}</dd>
       </div>
       <div className="rounded-xl bg-slate-950/50 border border-slate-800 px-3 py-2">
-        <dt className="text-xs text-slate-400">Open POA&amp;M</dt>
+        <dt className="text-xs text-slate-400">POA&amp;M control entries</dt>
+        <dd className="text-sm font-bold text-white font-mono">{count(m?.controlPoam)}</dd>
+      </div>
+      <div className="rounded-xl bg-slate-950/50 border border-slate-800 px-3 py-2">
+        <dt className="text-xs text-slate-400">Open vulnerability items</dt>
         <dd className="text-sm font-bold text-white font-mono">{count(m?.openPoam)}</dd>
       </div>
       <div className="rounded-xl bg-slate-950/50 border border-slate-800 px-3 py-2">

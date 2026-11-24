@@ -2,6 +2,7 @@ import { cmmcNumberOf, guideObjectives } from '../src/data/cmmcGuide/guide';
 import { getControlObjectives, hasWrittenTemplate } from '../src/data/cmmcGuide/objectives';
 import { objectiveNarrativePrints } from '../src/data/cmmcGuide/sspStatement';
 import { hasSspStatement, objectiveNarrativesInSsp, objectiveSspBadge, sspPreviewCaption, sspStatementLabel } from '../src/data/cmmcGuide/sspStatementView';
+import { NIST_800_171A_REGISTRY } from '../src/data/frameworks/assessmentObjectives';
 import type { ObjectiveStatus } from '../src/types/assessment';
 
 /**
@@ -38,6 +39,15 @@ assert(!!written && starter.trim() !== '', 'setup: the control has a written sta
 const sb = objectiveSspBadge(ID, L2, o('IN_PROGRESS', starter, starter), '');
 assert(sb?.kind === 'starter' && sb.text === 'Starter text: prints once Met', 'B5a: unedited starter text that is not Met', sb);
 assert(objectiveSspBadge(ID, L2, o('MET', starter, starter), '')?.kind === 'prints', 'B5b: the same starter text once Met prints');
+const naEmpty = objectiveSspBadge(ID, L2, o('NOT_APPLICABLE', ''), '');
+assert(naEmpty?.kind === 'starter' && naEmpty.text === 'Not applicable: write the reason here', 'B5c: Not applicable with no reason asks for one', naEmpty);
+const naReason = objectiveSspBadge(ID, L2, o('NOT_APPLICABLE', 'No Wi-Fi'), 'No Wi-Fi here');
+assert(naReason?.kind === 'prints' && naReason.text === 'Prints in the SSP as the Not applicable reason', 'B5d: a Not applicable reason prints even when the notes contain it', naReason);
+assert(objectiveSspBadge(ID, L2, o('NOT_APPLICABLE', starter, starter), '')?.kind === 'starter', 'B5e: a Not applicable narrative that is its starter text is not a reason');
+const farA = NIST_800_171A_REGISTRY['AC.L1-b.1.i'].objectives[0].prefilledTemplate;
+const newA = getControlObjectives(ID, undefined, undefined, undefined, L2).find((x) => x.letter === 'a')!.prefilledTemplate;
+const older = objectiveSspBadge(ID, L2, { ...o('IN_PROGRESS', farA, newA), letter: 'a' }, '');
+assert(farA.trim() !== newA.trim() && older?.kind === 'starter', 'B5f: an older starter text (the FAR template) is still starter text', older);
 const dup = objectiveSspBadge(ID, L2, o('MET', 'Covered here'), 'The notes say: Covered here, in full.');
 assert(dup?.kind === 'duplicate' && dup.text === 'Already in the control statement', 'B6: text contained in the notes is a duplicate', dup);
 const statuses: ObjectiveStatus[] = ['MET', 'NOT_MET', 'IN_PROGRESS', 'NOT_STARTED', 'NOT_APPLICABLE'];

@@ -323,6 +323,8 @@ const btnAt = identSrc.indexOf('Apply suggestion\n');
 assert(count(identSrc, 'applySuggestion(') === 1 && clickAt >= 0 && clickAt < applyAt && applyAt < btnAt, 'S1 the suggested values are saved only inside the Apply button handler');
 const builderSrc = read('src/components/ssp/SSPBuilder.tsx');
 assert(builderSrc.includes('clearSspFocusSection()') && builderSrc.includes('sectionHeadingRef.current?.focus()') && !builderSrc.includes('updateSSPMetadata({ systemOwner:'), 'S2 the builder consumes the focus request, focuses the heading, and never writes the owner');
+const attestSrc = builderSrc.slice(builderSrc.indexOf('5. Formal Attestation'));
+assert(!attestSrc.includes('{meta.systemOwner}') && !attestSrc.includes('{meta.assessmentDate}') && attestSrc.includes('UNSIGNED_ATTESTATION_NOTE') && count(attestSrc, 'SIGNATURE_BLANK') === 2, 'S2b the attestation prints the unsigned note and blank name and date lines, never the owner or the assessment date (#323)');
 const reviewSrc = read('src/components/ssp/SspSectionReview.tsx');
 assert(!reviewSrc.includes('{state?.currentDigest') && !reviewSrc.includes('contentSha256}') && !reviewSrc.includes('currentDigest}'), 'S3 the review block never interpolates a digest');
 const viewSrc = read('src/data/ssp/sspBuilderView.ts');

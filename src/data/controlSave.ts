@@ -1,5 +1,6 @@
 import type { ControlState } from '../types/cmmc';
 import { errorMessage } from '../utils/errors';
+import { cmmcDisplayId } from './cmmcGuide/displayId';
 
 // A server-backed tenant's control edits (status, notes, role) are saved with one PUT each. When the server refuses one or cannot be
 // reached, the screen must not keep showing it as saved. These helpers are pure so the rules can be tested without a browser.
@@ -25,13 +26,15 @@ export function staleWriteMessage(kind: 'control' | 'objective', id: string): st
  * The text for the "not saved" banner, or null when none is needed (a 401: the session signal already signs the user out).
  * Names the fields from the keys of `sent` only: never a value, because the notes may contain CUI.
  */
-export function controlSaveFailureMessage(controlId: string, sent: Partial<ControlState>, err: unknown): string | null {
+export function controlSaveFailureMessage(controlId: string, sent: Partial<ControlState>, err: unknown, framework?: string): string | null {
   const e = err as { name?: unknown; status?: unknown } | null;
   if (e && e.name === 'ApiError' && e.status === 401) return null;
-  if (isStaleWriteError(err)) return staleWriteMessage('control', controlId);
+  // The id the user sees (a Level 1 program shows the FAR id); without a framework the stored id is named as before
+  const shown = framework ? cmmcDisplayId(controlId, framework) : controlId;
+  if (isStaleWriteError(err)) return staleWriteMessage('control', shown);
   const fields = FIELD_LABELS.filter(([key]) => key in sent).map(([, label]) => label);
   const what = fields.length > 0 ? fields.join(' and ') : 'control';
-  return `The change to the ${what} of ${controlId} was not saved: ${errorMessage(err) || 'unknown error'}`;
+  return `The change to the ${what} of ${shown} was not saved: ${errorMessage(err) || 'unknown error'}`;
 }
 
 /**

@@ -82,13 +82,50 @@ export function cmmcCarryOver(controlId: string, framework: string): Record<stri
       for (const src of sources) {
         const hits = src.objectives.filter((o) => normalizeObjectiveText(o.text) === want);
         if (hits.length === 1) {
-          out[g.letter] = { sourceKey: src.key, sourceLetter: hits[0].letter, def: hits[0] };
+          let def = hits[0];
+          // Level 2 is about CUI: where the number-keyed entry (CUI wording) matches this letter once, its template wins over the FAR entry's (FCI wording)
+          if (framework === 'CMMC_L2' && byNumber && src.key !== number) {
+            const numberHits = byNumber.objectives.filter((o) => normalizeObjectiveText(o.text) === want);
+            if (numberHits.length === 1) def = { ...def, prefilledTemplate: numberHits[0].prefilledTemplate };
+          }
+          out[g.letter] = { sourceKey: src.key, sourceLetter: hits[0].letter, def };
           break;
         }
       }
     }
   }
   carryCache.set(cacheKey, out);
+  return out;
+}
+
+const variantCache = new Map<string, string[]>();
+
+/**
+ * Every starter text this objective has ever been given: the template of each registry source (the legacy FAR entry and the
+ * number-keyed entry) whose text matches the guide's wording once. Lets a narrative adopted before the Level 2 template changed
+ * still be recognised as unedited starter text.
+ */
+export function starterTemplateVariants(controlId: string, letter: string, framework: string): string[] {
+  const cacheKey = `${framework}|${controlId}|${letter}`;
+  const cached = variantCache.get(cacheKey);
+  if (cached) return cached;
+  const out: string[] = [];
+  const number = cmmcNumberOf(controlId);
+  const g = number ? guideObjectives(number, framework).find((x) => x.letter === letter) : undefined;
+  if (number && g) {
+    const legacy = legacyEntry(controlId);
+    const byNumber = NIST_800_171A_REGISTRY[number];
+    const sources: ObjectiveDefinitionTemplate[][] = [];
+    if (legacy) sources.push(legacy.objectives);
+    if (byNumber && byNumber.objectives.length > 0 && legacy?.key !== number) sources.push(byNumber.objectives);
+    const want = normalizeObjectiveText(g.text);
+    for (const objectives of sources) {
+      const hits = objectives.filter((o) => normalizeObjectiveText(o.text) === want);
+      const template = hits.length === 1 ? (hits[0].prefilledTemplate || '').trim() : '';
+      if (template !== '' && !out.includes(template)) out.push(template);
+    }
+  }
+  variantCache.set(cacheKey, out);
   return out;
 }
 

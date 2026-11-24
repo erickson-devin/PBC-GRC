@@ -27,6 +27,8 @@ import { GlobalSearch } from '../search/GlobalSearch';
 import { AnnouncementBanner } from './AnnouncementBanner';
 import { useWhatsNew } from '../../hooks/useWhatsNew';
 import { badgeText, whatsNewBadgeCount, whatsNewButtonLabel } from '../../data/whatsNewView';
+import { programGate } from '../../data/programDefaultChoice';
+import { chromeProgramState, noProgramChromeLabel } from '../../data/noProgramChromeView';
 
 interface HeaderProps {
 }
@@ -44,7 +46,13 @@ export const Header: React.FC<HeaderProps> = () => {
     openExportModal,
   } = useAssessment();
 
-  const { canEdit, currentTenant, activeFramework } = useTenant();
+  const { canEdit, currentTenant, activeFramework, activeProgram, programs, programsStatus, canManagePrograms } = useTenant();
+  // Before the first program (or with every program archived) the control counts and the readiness figure would describe nothing
+  const chrome = chromeProgramState({
+    serverBacked: !!currentTenant.serverBacked,
+    hasActiveProgram: !!activeProgram,
+    gate: programGate({ programsStatus, programs, canManagePrograms }),
+  });
   // The server could not confirm the session on load: the app shows this browser's data, so the badge must not say "live"
   const { sessionCheck } = useAuth();
   const totalCount = metrics.totalControls || frameworkControls.length || 1;
@@ -112,7 +120,7 @@ export const Header: React.FC<HeaderProps> = () => {
                 )}
               </div>
               <p className="text-xs text-slate-400 font-medium">
-                Pitch Black Cyber • {frameworkControls.length} Controls
+                Pitch Black Cyber{chrome === 'program' ? ` • ${frameworkControls.length} Controls` : ''}
               </p>
             </div>
           </button>
@@ -136,7 +144,19 @@ export const Header: React.FC<HeaderProps> = () => {
           {/* Global search (#254): the button, the / and Ctrl+K shortcuts and the dialog */}
           <GlobalSearch />
 
-          {/* SPRS / Compliance Indicator */}
+          {/* SPRS / Compliance Indicator (a neutral label that opens the Programs page until there is a program) */}
+          {chrome !== 'program' ? (
+            <button type="button"
+              onClick={() => setActiveTab('programs')}
+              className="text-left flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 shadow-inner cursor-pointer transition-colors"
+              title="Open the Programs page"
+            >
+              <div className="text-xs text-slate-400 flex items-center gap-1.5 font-medium">
+                <Lock className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                <span>{noProgramChromeLabel(chrome)}</span>
+              </div>
+            </button>
+          ) : (
           <button type="button"
             onClick={() => setActiveTab('controls')}
             className="text-left flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 shadow-inner cursor-pointer transition-colors"
@@ -165,6 +185,7 @@ export const Header: React.FC<HeaderProps> = () => {
               </span>
             )}
           </button>
+          )}
 
 
           {/* Quick Action Buttons */}

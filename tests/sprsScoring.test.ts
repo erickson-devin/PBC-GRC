@@ -14,6 +14,7 @@ import {
 } from '../src/data/reports/sprsCompiler';
 import fs from 'fs';
 import path from 'path';
+import { sprsWeightCounts } from '../src/data/reports/sprsWeightCounts';
 import { remediationPriorities } from '../src/data/reports/remediationPriority';
 import { getFrameworkControls } from '../src/data/frameworks/frameworkRegistry';
 import { CMMC_LEVEL_2_CONTROLS as CONTROLS } from '../src/data/frameworks/cmmcLevel2Controls';
@@ -205,6 +206,17 @@ assert(
     overviewSrc.includes('remediationPriorities(activeFramework'),
   'the dashboard shows SPRS wording only when showSprs (CMMC L2) and uses remediationPriorities'
 );
+
+console.log('\n--- impact chips add up (#327) ---');
+const wc2 = getFrameworkControls('CMMC_L2');
+const wc = sprsWeightCounts(wc2);
+const zeroWeight = wc2.filter((c) => getSprsPointDeduction(c.id) === 0);
+assert(wc.five + wc.three + wc.one + wc.none === wc2.length, 'W1 the four impact classes add up to the Level 2 controls', wc);
+assert(wc.none === zeroWeight.length && wc.none >= 1 && zeroWeight.every((c) => extractNistRequirementId(c.id) === '3.12.4'), 'W2 the no-point-value class is the 3.12.4 control(s)', zeroWeight.map((c) => c.id));
+const wcEmpty = sprsWeightCounts([]);
+assert(wcEmpty.five === 0 && wcEmpty.three === 0 && wcEmpty.one === 0 && wcEmpty.none === 0, 'W3 no controls gives all zeros', wcEmpty);
+const matrixSrc = fs.readFileSync(path.join(process.cwd(), 'src/components/dashboard/AssessmentMatrix.tsx'), 'utf8').replace(/\r\n/g, '\n');
+assert(matrixSrc.includes('sprsWeightCounts(') && matrixSrc.includes('weightCounts.none') && matrixSrc.includes('setSelectedWeightFilter(0)'), 'W4 the matrix counts with sprsWeightCounts and offers the no-point-value chip');
 
 console.log('\n================================================================');
 console.log(`📊 TEST RESULTS: ${passed} / ${total} TESTS PASSED (${Math.round((passed / total) * 100)}%)`);

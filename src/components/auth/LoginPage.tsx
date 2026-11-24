@@ -93,8 +93,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <BrandLogo size="lg" showText={false} />
               </div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-xs font-bold uppercase tracking-widest text-cyan-300">
-                <Lock className="w-3 h-3 text-cyan-400" />
-                CMMC 2.0 Level 1 Enclave
+                <Lock className="w-3 h-3 text-cyan-400" aria-hidden="true" />
+                On-Premises Compliance Platform
               </div>
               <h2 className="text-2xl font-black text-white tracking-tight">
                 {mfaChallenge ? (mfaChallenge.stage === 'enrol' ? 'Set Up Two-Step Verification' : 'Two-Step Verification') : 'Enterprise Sign In'}
@@ -171,7 +171,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       {/* Footer */}
       <footer className="px-6 py-4 text-center text-xs text-slate-400 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 max-w-5xl mx-auto w-full">
-        <span>© {new Date().getFullYear()} Pitch Black Cyber LLC • CMMC 2.0 Level 1 Enclave</span>
+        <span>© {new Date().getFullYear()} Pitch Black Cyber LLC • Event Horizon: Singularity</span>
         <div className="flex items-center gap-4 text-xs text-slate-400">
           <button
             onClick={() => onOpenLegal && onOpenLegal('privacy')}

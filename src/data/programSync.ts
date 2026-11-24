@@ -98,7 +98,7 @@ export function parseProgramList(body: unknown): Program[] {
   return programs;
 }
 
-/** GET .../programs/:id/metrics: { documented, total, evidence, openPoam }. Anything missing is null. */
+/** GET .../programs/:id/metrics: { documented, total, evidence, openPoam (vulnerability items), controlPoam (control entries not MET) }. Anything missing is null. */
 export function parseProgramMetrics(body: unknown): ProgramMetrics {
   const b = isRecord(body) ? body : {};
   const coverage = isRecord(b.coverage) ? b.coverage : {};
@@ -106,6 +106,7 @@ export function parseProgramMetrics(body: unknown): ProgramMetrics {
     documented: count(b.documented ?? coverage.documented),
     total: count(b.total ?? coverage.total),
     openPoam: count(b.openPoam ?? b.open_poam),
+    controlPoam: count(b.controlPoam ?? b.control_poam),
     evidenceCount: count(b.evidence ?? b.evidenceCount),
   };
 }

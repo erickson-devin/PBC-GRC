@@ -16,10 +16,12 @@ import { NOT_RECORDED } from '../data/reports/documentDefaults';
 import { cmmcDisplayId } from '../data/cmmcGuide/displayId';
 import { composeImplementationStatement } from '../data/cmmcGuide/sspStatement';
 import { statusDisplayLabel } from '../data/statusLabels';
+import { sspRequirementLine } from '../data/ssp/requirementLine';
 import type { SspProfile } from '../types/sspProfile';
 import { sspIdentificationItems, sspMaintenanceExceptions, sspMaintenanceItems, sspRoleLines } from '../data/ssp/sspOutput';
 import { sspInventoryMarkdown, type SspInventorySnapshot } from '../data/inventory/sspInventory';
 import { sspDocumentsMarkdown, type SspDocumentsSnapshot } from '../data/documents/sspDocuments';
+import { localDateIso } from '../utils/localDate';
 
 const STORAGE_KEY_PREFIX = ASSESSMENT_KEY_PREFIX;
 
@@ -74,7 +76,7 @@ export function createDefaultSspMetadata(tenant: Tenant): SSPMetadata {
     samStatus: tenant.samStatus || 'NOT_REGISTERED',
     systemOwner: tenant.systemOwner || '',
     authorName: '',
-    assessmentDate: new Date().toISOString().split('T')[0],
+    assessmentDate: localDateIso(),
     systemBoundaryScope: tenant.systemBoundaryScope || '',
     systemEnvironment: '',
     cloudServiceProviders: '',
@@ -152,7 +154,10 @@ export function buildSspMarkdown(
     const authority = ctrl.authorityReference || '';
     md += `### ${cmmcDisplayId(ctrl.id, framework)}: ${ctrl.title}\n\n`;
     if (authority) md += `- **Authority Reference:** ${authority}\n`;
-    md += `- **Domain:** ${ctrl.domain} - ${ctrl.plainEnglishSummary}\n`;
+    // #322: the guide's requirement text for CMMC, a labelled summary otherwise (never a paraphrase presented as the requirement)
+    const requirement = sspRequirementLine(ctrl, framework);
+    md += `- **Domain:** ${ctrl.domain}\n`;
+    md += `- **${requirement.label}:** ${requirement.text}\n`;
     md += `- **Evaluation Status:** **${statusDisplayLabel(cState?.status)}**\n`;
     md += `- **Responsible Role:** ${cState?.responsibleRole || NOT_RECORDED}\n`;
     md += `\n**Implementation Statement:**\n\n`;
